@@ -29,3 +29,7 @@ The WASM module is built with the `wasm` script in the `astro` directory. This b
 The live preview is rendered in an iframe in the `Preview.tsx` React component. To minimise flashing and unnecessary re-renders, the iframe loads `morphdom` as a dependency, and the parent page passes HTML to the iframe using messages, which are efficiently processed by `morphdom` to update the iframe's DOM.
 
 Source files are stored in an in-memory WASM SQLite database `sql.js`, which is essentially used as a state management system for the frontend. The database is automatically saved and loaded from IndexedDB when the page is loaded. The database is made available to the app through the `useSql` hook which accesses the `SqlProvider` Context.
+
+# Licence
+
+This project is currently licensed under the AGPL. The copyright holder reserves the right to offer alternative licensing terms in the future.
