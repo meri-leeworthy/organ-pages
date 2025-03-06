@@ -1,25 +1,13 @@
 import { useEffect, useRef, useState } from "react"
-import { useSqlContext } from "./SqlContext.jsx"
+import { useStoreContext } from "./StoreContext.jsx"
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert.jsx"
-import type { FileData, SelectedFiles } from "../lib/types.jsx"
-import type { ParamsObject } from "sql.js"
 import useRender from "@/hooks/useRender.js"
 
-export const Preview = ({
-  selectedFiles,
-}: {
-  selectedFiles: SelectedFiles
-  setSelectedFiles: React.Dispatch<React.SetStateAction<SelectedFiles>>
-}) => {
+export const Preview = () => {
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const [iframeLoaded, setIframeLoaded] = useState<boolean>(false)
 
-  const {
-    execute,
-    loading: sqlLoading,
-    error: sqlError,
-    schemaInitialized,
-  } = useSqlContext()
+  const { store, loading: storeLoading, error: storeError } = useStoreContext()
   const { loading: wasmLoading, error: wasmError, renderLocal } = useRender()
 
   function getBodyContent(htmlString: string) {
@@ -37,12 +25,13 @@ export const Preview = ({
 
   useEffect(() => {
     if (
-      !schemaInitialized ||
-      sqlLoading ||
-      sqlError ||
+      !store ||
+      storeLoading ||
+      storeError ||
       wasmLoading ||
       !iframeLoaded ||
-      !selectedFiles.contentFileId
+      !store.activeProject?.activeFile ||
+      !store.activeProject?.activePage
     )
       return
 
@@ -50,37 +39,37 @@ export const Preview = ({
       try {
         const query =
           "SELECT file.id, file.name, file.data, file.url, model.name as type FROM file JOIN model ON file.model_id = model.id;"
-        const result = execute(query)
+        // const result = execute(query)
 
-        const files = result.map((file: ParamsObject): [number, FileData] => [
-          file.id as number,
-          {
-            id: file.id as number,
-            name: file.name?.toString() || "",
-            type: file.type?.toString() as FileData["type"],
-            data: JSON.parse(file.data?.toString() || "{}"),
-            url: file.url?.toString() || "",
-          },
-        ])
+        // const files = result.map((file: ParamsObject): [number, FileData] => [
+        //   file.id as number,
+        //   {
+        //     id: file.id as number,
+        //     name: file.name?.toString() || "",
+        //     type: file.type?.toString() as FileData["type"],
+        //     data: JSON.parse(file.data?.toString() || "{}"),
+        //     url: file.url?.toString() || "",
+        //   },
+        // ])
 
-        const filesMap = new Map(files)
+        // const filesMap = new Map(files)
 
-        const combinedContent = renderLocal(
-          selectedFiles.contentFileId,
-          filesMap
-        )
+        // const combinedContent = renderLocal(
+        //   selectedFiles.contentFileId,
+        //   filesMap
+        // )
 
-        console.log("full content", combinedContent)
+        // console.log("full content", combinedContent)
 
-        const bodyContent = getBodyContent(combinedContent)
-        console.log("bodyContent", bodyContent)
+        // const bodyContent = getBodyContent(combinedContent)
+        // console.log("bodyContent", bodyContent)
 
-        if (iframeRef.current?.contentWindow) {
-          iframeRef.current.contentWindow.postMessage(
-            { type: "update", html: bodyContent },
-            "*"
-          )
-        }
+        // if (iframeRef.current?.contentWindow) {
+        //   iframeRef.current.contentWindow.postMessage(
+        //     { type: "update", html: bodyContent },
+        //     "*"
+        //   )
+        // }
       } catch (e) {
         console.error("Error during conversion:", e)
       }
@@ -97,7 +86,7 @@ export const Preview = ({
       window.removeEventListener("keydown", delayedHandleRender)
       window.removeEventListener("click", delayedHandleRender)
     }
-  }, [selectedFiles, wasmLoading, sqlLoading, iframeLoaded])
+  }, [store.activeProject?.activeFile, wasmLoading, storeLoading, iframeLoaded])
 
   // const onLinkClick = (href: string) => {
   //   const newFileId = [...files.values()].find(

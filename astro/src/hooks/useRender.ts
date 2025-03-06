@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react"
-import { useBlobStore, type BlobStore } from "@/components/BlobStoreContext"
+import { useBlobStore, type BlobStore } from "@/components/useBlobStore.jsx"
 import { type FileData } from "@/lib/types"
 import { updateImageUrls } from "@/lib/updateImageUrls.js"
-import { useSqlContext } from "@/components/SqlContext.jsx"
+import { useStoreContext } from "@/components/StoreContext.jsx"
 
 export type Context = Record<
   string,
@@ -18,12 +18,7 @@ export default function useRender() {
   const [loading, setLoading] = useState<boolean>(false)
   const [error, setError] = useState<string>("")
   const blobStore = useBlobStore()
-  const {
-    execute,
-    loading: sqlLoading,
-    error: sqlError,
-    schemaInitialized,
-  } = useSqlContext()
+  const { store, loading: storeLoading, error: storeError } = useStoreContext()
 
   const [wasmModule, setWasmModule] = useState<{
     render: (current_file_id: number, context: Context) => string
@@ -58,18 +53,18 @@ export default function useRender() {
       }
 
       const context: Context = {}
-      files.forEach(file => {
-        context[file.id] = {
-          name: file.name,
-          file_type: file.type,
-          data: JSON.stringify(
-            local
-              ? updateImageUrls(file.data, blobStore.getBlobURL)
-              : updateImageUrls(file.data, getLiveUrl)
-          ),
-          url: file.url || "",
-        }
-      })
+      // files.forEach(file => {
+      //   context[file.id] = {
+      //     name: file.name,
+      //     file_type: file.type,
+      //     data: JSON.stringify(
+      //       local
+      //         ? updateImageUrls(file.data, blobStore.getBlobURL)
+      //         : updateImageUrls(file.data, getLiveUrl)
+      //     ),
+      //     url: file.url || "",
+      //   }
+      // })
 
       try {
         const result = wasmModule.render(contentFileId, context)
@@ -81,7 +76,7 @@ export default function useRender() {
         return ""
       }
     },
-    [wasmModule, sqlLoading, sqlError, schemaInitialized]
+    [wasmModule, storeLoading, storeError]
   )
 
   const renderLocal = useCallback(
@@ -99,14 +94,13 @@ export default function useRender() {
   const getLiveUrl = useCallback(
     (fileId: number) => {
       console.log("getLiveUrl: ", fileId)
-      if (!schemaInitialized || sqlLoading || sqlError)
-        throw new Error("Failed to get live url")
+      if (storeLoading || storeError) throw new Error("Failed to get live url")
       const query = `SELECT url FROM file WHERE id = ?;`
-      const result = execute(query, [fileId])
-      console.log("result: ", result)
-      return result[0].url as string
+      // const result = execute(query, [fileId])
+      // console.log("result: ", result)
+      // return result[0].url as string
     },
-    [execute, schemaInitialized, sqlLoading, sqlError]
+    [store, storeLoading, storeError]
   )
 
   return { loading, error, render, renderLocal, getLiveUrl }

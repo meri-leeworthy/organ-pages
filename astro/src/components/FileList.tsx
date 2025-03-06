@@ -1,18 +1,12 @@
 import { useEffect, useState } from "react"
-import {
-  headingMap,
-  type Collection,
-  type FileData,
-  type SelectedFiles,
-} from "../lib/types"
+import { headingMap, type Collection, type SelectedFiles } from "../lib/types"
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "./ui/collapsible"
 import { Plus } from "lucide-react"
-import { useSqlContext } from "./SqlContext"
-import type { ParamsObject } from "sql.js"
+import { useStoreContext } from "./StoreContext"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,69 +19,35 @@ import {
   SidebarGroupLabel,
 } from "./ui/sidebar"
 
-import { useBlobStore } from "./BlobStoreContext"
-import { MODEL_IDS } from "@/lib/consts"
-import { loadAssetFile, loadTextFile } from "@/lib/loadFile"
+import { useBlobStore } from "./useBlobStore"
+// import { loadAssetFile, loadTextFile } from "@/lib/loadFile"
 import { FileListItem } from "./FileListItem"
+import type { File } from "@/lib/File"
 
-export function FileList({
-  type,
-  selectedFiles,
-  setSelectedFiles,
-}: {
-  type: Collection
-  selectedFiles: SelectedFiles
-  setSelectedFiles: React.Dispatch<React.SetStateAction<SelectedFiles>>
-}) {
+export function FileList({ type }: { type: string }) {
   const [isOpen, setIsOpen] = useState<boolean>(true)
-  const [files, setFiles] = useState<Map<number, FileData>>(new Map())
 
-  const { execute, loading, error, schemaInitialized } = useSqlContext()
-  const blobStore = useBlobStore()
+  const { store, loading, error } = useStoreContext()
+  // const blobStore = useBlobStore()
 
-  // console.log("files", files)
+  const files = store.activeProject?.getCollection(type).files
 
-  useEffect(() => {
-    if (!schemaInitialized || loading || error) return
-
-    try {
-      const query = `
-          SELECT file.id, file.name, file.data, file.url, model.name AS type
-            FROM file
-            JOIN model ON file.model_id = model.id
-            WHERE model.name = '${type}';
-        `
-      if (!query) {
-        throw new Error(`Unknown type: ${type}`)
-      }
-      const result = execute(query)
-      console.log("Result from SQL.js:", result)
-      const files: FileData[] = result.map((file: ParamsObject) => ({
-        id: file.id as number,
-        name: file.name?.toString() || "",
-        type: file.type?.toString() as FileData["type"],
-        data: JSON.parse(file.data?.toString() || "{}") as FileData["data"],
-        url: file.url?.toString() || "",
-      }))
-      setFiles(new Map(files.map(file => [file.id, file])))
-    } catch (err) {
-      console.error("Error fetching data:", err)
-    }
-  }, [execute, loading, error, schemaInitialized, selectedFiles])
-
-  if (loading || !schemaInitialized) return <div>Loading...</div>
+  if (loading) return <div>Loading...</div>
   if (error) return <div>Error: {error.message}</div>
 
-  const handleCreateFile = (type: Collection) => {
-    if (!schemaInitialized || loading || error) return
+  const handleCreateFile = (type: string) => {
+    if (loading || error) return
 
     // Function to generate unique filename
-    const generateUniqueFileName = (baseName: string, files: FileData[]) => {
+    const generateUniqueFileName = (
+      baseName: string,
+      files: Map<string, File>
+    ) => {
       let fileName = `${baseName}`
       let counter = 1
 
       // Check if file with this name already exists
-      while (files.some(file => file.name === fileName)) {
+      while ([...files.values()].some(file => file.name === fileName)) {
         fileName = `${baseName}${counter}`
         counter++
       }
@@ -95,41 +55,13 @@ export function FileList({
       return fileName
     }
 
-    const newFileName = generateUniqueFileName("untitled", [...files.values()])
+    // const newFileName = generateUniqueFileName("untitled", files)
 
-    execute(
-      "INSERT OR IGNORE INTO file (name, model_id, data) VALUES (?, ?, ?);",
-      [
-        newFileName,
-        MODEL_IDS[type],
-        JSON.stringify({
-          template: 2,
-          title: "",
-          body: { type: "html", content: "" },
-        }),
-      ]
-    )
-    const result = execute("SELECT last_insert_rowid() as id;")
-    console.log("insert result", result)
-
-    const newFile: FileData = {
-      id: result[0].id as number,
-      name: newFileName,
-      type,
-      data: {
-        body: {
-          type: "html",
-          content: "",
-        },
-      },
-      url: "",
-    }
-
-    setFiles(files => files.set(newFile.id, newFile))
+    // const newFile = store.activeProject?.createFile(newFileName, type)
   }
 
-  const handleLoadFile = async (type: Collection) => {
-    if (!schemaInitialized || loading || error) return
+  const handleLoadFile = async (type: string) => {
+    if (loading || error) return
     const input = document.createElement("input")
     input.type = "file"
 
@@ -138,38 +70,42 @@ export function FileList({
       partial: ".html,.htm,.hbsp",
       page: ".md",
       post: ".md",
-      templateAsset: ".css,.js,.json",
+      text: "*",
       asset: "*",
     } as const
-    input.accept = loadExtensionMap[type]
+    input.accept =
+      type in loadExtensionMap
+        ? loadExtensionMap[type as keyof typeof loadExtensionMap]
+        : "*"
 
     input.onchange = async (e: Event) => {
       const file = (e.target as HTMLInputElement).files?.[0]
       if (file) {
         if (type === "asset") {
           // parse file and add to database
-          const newFile = await loadAssetFile(file, execute, blobStore)
-          setFiles(files => files.set(newFile.id, newFile))
-          setSelectedFiles(selectedFiles => ({
-            activeFileId: newFile.id,
-            contentFileId: selectedFiles.contentFileId,
-          }))
+          // const newFile = await loadAssetFile(file, execute, blobStore)
+          // setFiles(files => files.set(newFile.id, newFile))
+          // setSelectedFiles(selectedFiles => ({
+          //   activeFileId: newFile.id,
+          //   contentFileId: selectedFiles.contentFileId,
+          // }))
         } else {
           // parse file and add to database
-          const newFile = await loadTextFile(file, type, execute)
-          setFiles(files => files.set(newFile.id, newFile))
-          setSelectedFiles(selectedFiles => ({
-            activeFileId: newFile.id,
-            contentFileId:
-              type === "page" ? newFile.id : selectedFiles.contentFileId,
-          }))
+          // const newFile = await loadTextFile(file, type, execute)
+          // setFiles(files => files.set(newFile.id, newFile))
+          // setSelectedFiles(selectedFiles => ({
+          //   activeFileId: newFile.id,
+          //   contentFileId:
+          //     type === "page" ? newFile.id : selectedFiles.contentFileId,
+          // }))
         }
       }
     }
     input.click()
   }
 
-  const heading = headingMap[type]
+  const heading =
+    type in headingMap ? headingMap[type as keyof typeof headingMap] : type
 
   return (
     <Collapsible
@@ -202,16 +138,7 @@ export function FileList({
 
         <CollapsibleContent>
           <ul className="">
-            {[...files.values()].map(file => (
-              <FileListItem
-                key={file.id}
-                file={file}
-                files={files}
-                setFiles={setFiles}
-                selectedFiles={selectedFiles}
-                setSelectedFiles={setSelectedFiles}
-              />
-            ))}
+            {files?.map(file => <FileListItem key={file.id} file={file} />)}
           </ul>
         </CollapsibleContent>
       </SidebarGroup>

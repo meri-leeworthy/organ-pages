@@ -1,9 +1,9 @@
 import { defineConfig } from "vite"
+import wasm from "vite-plugin-wasm";
+import topLevelAwait from "vite-plugin-top-level-await";
 
 export default defineConfig({
-  optimizeDeps: {
-    exclude: ['@vector-im/matrix-wysiwyg'],
-  },
+  plugins: [wasm(), topLevelAwait()],
   build: {
     target: "esnext",
     assetsInlineLimit: 0, // ensure WASM file isn't inlined

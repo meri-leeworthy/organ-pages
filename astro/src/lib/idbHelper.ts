@@ -8,13 +8,12 @@ export const openDatabase = () => {
   }
 
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("sqljs-db", 4) // Ensure this version is higher if needed for schema changes
-    // to clarify i think this means the indexedDB schema not the sql schema
+    const request = indexedDB.open("organ-db", 1) // Ensure this version is higher if needed for idb schema changes
 
     request.onupgradeneeded = event => {
       const db = request.result
-      if (!db.objectStoreNames.contains("sqlfile")) {
-        db.createObjectStore("sqlfile") // Create the 'sqlfile' object store
+      if (!db.objectStoreNames.contains("doc")) {
+        db.createObjectStore("doc") // Create the 'doc' object store
       }
       if (!db.objectStoreNames.contains("assets")) {
         db.createObjectStore("assets") // Create the 'assets' object store
@@ -34,9 +33,9 @@ export const openDatabase = () => {
 export const saveToIndexedDB = async (data: Uint8Array) => {
   try {
     const db = await openDatabase()
-    const transaction = db.transaction("sqlfile", "readwrite")
-    const store = transaction.objectStore("sqlfile")
-    store.put(data, "filedata")
+    const transaction = db.transaction("doc", "readwrite")
+    const store = transaction.objectStore("doc")
+    store.put(data, "snapshot")
 
     return new Promise<void>((resolve, reject) => {
       transaction.oncomplete = () => {
@@ -75,7 +74,7 @@ export const saveAssetToIndexedDB = async (id: number, data: Blob) => {
   }
 }
 
-export const loadAssetFromIndexedDB = async (id: number) => {
+export const loadAssetFromIndexedDB = async (id: string) => {
   try {
     const db = await openDatabase()
     const transaction = db.transaction("assets", "readonly")
@@ -96,7 +95,7 @@ export const loadAssetFromIndexedDB = async (id: number) => {
   }
 }
 
-export const deleteAssetFromIndexedDB = async (id: number) => {
+export const deleteAssetFromIndexedDB = async (id: string) => {
   try {
     const db = await openDatabase()
     const transaction = db.transaction("assets", "readwrite")
@@ -125,9 +124,9 @@ export const loadFromIndexedDB = async () => {
   }
 
   const db = await openDatabase()
-  const transaction = db.transaction("sqlfile", "readonly")
-  const store = transaction.objectStore("sqlfile")
-  const request = store.get("filedata")
+  const transaction = db.transaction("doc", "readonly")
+  const store = transaction.objectStore("doc")
+  const request = store.get("snapshot")
 
   return new Promise<Uint8Array>((resolve, reject) => {
     request.onsuccess = () => {

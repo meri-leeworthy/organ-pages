@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useState } from "react"
-import { useSqlContext } from "./SqlContext"
+import { useStoreContext } from "@/components/StoreContext"
 import { DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu"
 import { MODEL_IDS } from "@/lib/consts"
 import type { FileData } from "@/lib/types"
 import type { Editor } from "@tiptap/react"
-import { useBlobStore } from "./BlobStoreContext"
+import { useBlobStore } from "./useBlobStore"
 
 export function ImageSelector({ editor }: { editor: Editor }) {
   // it's important that the image html tag has a data-id attribute with the id of the image
 
-  const { execute, loading, error, schemaInitialized } = useSqlContext()
+  const { store, loading, error } = useStoreContext()
   const [images, setImages] = useState<FileData[]>([])
   const blobStore = useBlobStore()
 
@@ -29,17 +29,17 @@ export function ImageSelector({ editor }: { editor: Editor }) {
   )
 
   useEffect(() => {
-    if (!schemaInitialized || loading || error) return
-    const result = execute("SELECT id, name FROM file WHERE model_id = ?", [
-      MODEL_IDS.asset,
-    ])
-    const images = result.map(row => ({
-      id: row.id as number,
-      name: row.name as string,
-      type: "asset",
-    }))
-    setImages(images as FileData[])
-  }, [schemaInitialized, loading, error])
+    if (loading || error) return
+    // const result = store.execute("SELECT id, name FROM file WHERE model_id = ?", [
+    //   MODEL_IDS.asset,
+    // ])
+    // const images = result.map(row => ({
+    //   id: row.id as number,
+    //   name: row.name as string,
+    //   type: "asset",
+    // }))
+    // setImages(images as FileData[])
+  }, [store, loading, error])
 
   return (
     <DropdownMenuContent>

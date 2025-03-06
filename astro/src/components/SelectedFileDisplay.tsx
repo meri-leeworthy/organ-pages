@@ -1,7 +1,7 @@
-import { useSqlContext } from "./SqlContext"
-import { type Collection, type FileData } from "../lib/types"
+import { useStoreContext } from "./StoreContext"
+import { type OrganUserModelField } from "../lib/types"
 import { AutoResizeTextarea } from "./ui/textarea"
-import { useBlobStore } from "./BlobStoreContext"
+import { useBlobStore } from "./useBlobStore"
 import { Label } from "./ui/label"
 import {
   Select,
@@ -16,70 +16,48 @@ import { Card } from "./ui/card"
 import { X } from "lucide-react"
 import { useClient } from "@/hooks/useClient"
 import useRender from "@/hooks/useRender"
-import type { ParamsObject } from "sql.js"
 import { EditorComponent as Editor } from "./Editor"
-import type { Schema } from "./FileContainer"
 import { useState } from "react"
 import { toast } from "sonner"
-import { SidebarTrigger } from "./ui/sidebar"
+import { File } from "@/lib/File"
 
-export interface Field {
-  name: string
-  type: "string" | "number" | "date" | "array" | "plaintext" | "html"
-  required?: true
-}
-
-export const SelectedFileDisplay = ({
-  file,
-  setFile,
-  type,
-  schema,
-  templates,
-  onClose,
-}: {
-  file: FileData
-  setFile: React.Dispatch<React.SetStateAction<FileData<Record<string, any>>>>
-  type: Collection
-  schema: Schema
-  templates: Map<number, string>
-  onClose: () => void
-}) => {
-  if (!file) return null
-
+export const SelectedFileDisplay = ({ onClose }: { onClose: () => void }) => {
   const blobStore = useBlobStore()
   const client = useClient()
   const { render } = useRender()
-  const { execute, loading, error, schemaInitialized } = useSqlContext()
+  const { store, loading, error } = useStoreContext()
   const [publishLoading, setPublishLoading] = useState(false)
+  const file = store.activeProject?.activeFile
 
-  console.log("schema", schema)
+  if (!file) return null
+
+  const collection = store.activeProject?.getCollection(file.type)
+  if (!collection) return null
+
+  const fields = collection.getFields()
+
+  console.log("collection", collection)
+  console.log("fields", fields)
 
   const handlePublishFile = async () => {
-    if (!schemaInitialized || loading || error || !file) return
+    if (!store || loading || error) return
     console.log("uploading file", file)
     setPublishLoading(true)
     if (file.type === "asset") {
       const blob = await blobStore.getBlob(file.id)
 
       try {
-        if (!file.data?.mime_type) {
+        const mimeType = file.tryGetField("mimeType")
+        if (!mimeType) {
           throw new Error("No mime type found")
         }
-        const url = await client.uploadFile(
-          blob,
-          file.name,
-          file.data.mime_type
-        )
+        const url = await client.uploadFile(blob, file.name, String(mimeType))
         if (!url) {
           throw new Error("No url found")
         }
-        const newFile = {
-          ...file,
-          url,
-        }
-        console.log("success", newFile)
-        setFile(newFile)
-        execute("UPDATE file SET url = ? WHERE id = ?;", [url, file.id])
+        file.setField("url", url)
+        console.log("success", file)
+        // store.setActiveFile(file)
         setPublishLoading(false)
         toast.success("File published")
       } catch (error) {
@@ -89,23 +67,19 @@ export const SelectedFileDisplay = ({
       return
     }
 
-    if (!file.data || !file.data.body || !file.data.body.content) return
-
-    if (file.type === "templateAsset") {
+    if (file.type === "text") {
       try {
         let mimeType = "text/css"
         if (file.name.endsWith(".js")) {
           mimeType = "text/javascript"
         }
-        const blob = new Blob([file.data.body.content], { type: mimeType })
+        const body = file.tryGetField("content")
+        if (!body) throw new Error("No content found")
+        const blob = new Blob([String(body)], { type: mimeType })
         const url = await client.uploadFile(blob, file.name, mimeType)
         if (!url) throw new Error("No url found")
-        const newFile = {
-          ...file,
-          url,
-        }
-        setFile(newFile)
-        execute("UPDATE file SET url = ? WHERE id = ?;", [url, file.id])
+        file.setField("url", url)
+        // store.setActiveFile(file)
         setPublishLoading(false)
         toast.success("File published")
       } catch (error) {
@@ -119,33 +93,33 @@ export const SelectedFileDisplay = ({
     try {
       const query =
         "SELECT file.id, file.name, file.data, file.url, model.name as type FROM file JOIN model ON file.model_id = model.id;"
-      const result = execute(query)
-      const files = result.map((file: ParamsObject): [number, FileData] => [
-        file.id as number,
-        {
-          id: file.id as number,
-          name: file.name?.toString() || "",
-          type: file.type?.toString() as FileData["type"],
-          data: JSON.parse(file.data?.toString() || "{}"),
-          url: file.url?.toString() || "",
-        },
-      ])
-      const renderedFile = render(file.id, new Map(files))
+      // const result = execute(query)
+      // const files = result.map((file: ParamsObject): [number, FileData] => [
+      //   file.id as number,
+      //   {
+      //     id: file.id as number,
+      //     name: file.name?.toString() || "",
+      //     type: file.type?.toString() as FileData["type"],
+      //     data: JSON.parse(file.data?.toString() || "{}"),
+      //     url: file.url?.toString() || "",
+      //   },
+      // ])
+      // const renderedFile = render(file.id, new Map(files))
 
-      console.log("renderedFile", renderedFile)
+      // console.log("renderedFile", renderedFile)
 
       // now upload the rendered file
-      const blob = new Blob([renderedFile], { type: "text/html" })
-      const url = await client.uploadFile(blob, file.name, "text/html")
-      if (!url) {
-        throw new Error("No url found")
-      }
-      const newFile = {
-        ...file,
-        url,
-      }
-      setFile(newFile)
-      execute("UPDATE file SET url = ? WHERE id = ?;", [url, file.id])
+      // const blob = new Blob([renderedFile], { type: "text/html" })
+      // const url = await client.uploadFile(blob, file.name, "text/html")
+      // if (!url) {
+      //   throw new Error("No url found")
+      // }
+      // const newFile = {
+      //   ...file,
+      //   url,
+      // }
+      // setFile(newFile)
+      // execute("UPDATE file SET url = ? WHERE id = ?;", [url, file.id])
       setPublishLoading(false)
       toast.success("File published")
     } catch (error) {
@@ -155,31 +129,22 @@ export const SelectedFileDisplay = ({
   }
 
   const handleDataChange = (fieldName: string, value: any) => {
-    const newData = { ...file.data }
-
     if (fieldName === "body") {
-      newData.body = { type: "html", content: value }
+      file?.setField("body", { type: "html", content: value })
     } else {
-      newData[fieldName] = value
+      file?.setField(fieldName, value)
     }
 
-    const query = `
-    UPDATE file
-    SET data = ?
-    WHERE id = ?;
-    `
-    try {
-      execute(query, [JSON.stringify(newData), file.id])
-      setFile({ ...file, data: newData })
-    } catch (err) {
-      console.error("Error updating data:", err)
-    }
+    // Create a clone of the file to trigger a re-render
+    // store.setActiveFile(
+    //   Object.assign(Object.create(Object.getPrototypeOf(file)), file)
+    // )
   }
 
-  const renderFieldWithLabel = (field: Field) => {
-    if (field.type === "html")
+  const renderFieldWithLabel = (name: string, field: OrganUserModelField) => {
+    if (field.type === "richtext")
       return (
-        <div className="flex flex-col gap-2" key={`${file.id}-${field.name}`}>
+        <div className="flex flex-col gap-2" key={`${file.id}-${name}`}>
           <Label htmlFor="body" className="capitalize">
             Body
           </Label>
@@ -192,37 +157,45 @@ export const SelectedFileDisplay = ({
       )
 
     return (
-      <div className="flex flex-col gap-2" key={`${file.id}-${field.name}`}>
-        <Label htmlFor={field.name} className="capitalize">
-          {field.name}
+      <div className="flex flex-col gap-2" key={`${file.id}-${name}`}>
+        <Label htmlFor={name} className="capitalize">
+          {name}
         </Label>
-        {renderField(field)}
+        {renderField(name, field)}
       </div>
     )
   }
 
-  const renderField = (field: Field) => {
-    if (!file.data) return null
-    const value =
-      field.name === "body" ? file.data?.body?.content : file.data[field.name]
+  const renderField = (name: string, field: OrganUserModelField) => {
+    const rawValue = file.tryGetField(name)
+    console.log("rawValue", rawValue)
+    let value: string | number | string[] | undefined
 
-    if (field.name === "template") {
+    if (name === "body" && typeof rawValue === "object" && rawValue !== null) {
+      value = (rawValue as { content: string })?.content
+    } else if (field.type === "array") {
+      value = Array.isArray(rawValue) ? rawValue : []
+    } else {
+      value = rawValue ? String(rawValue) : ""
+    }
+
+    if (name === "template") {
       return (
         <Select
-          value={value?.toString()}
-          onValueChange={value => handleDataChange(field.name, value)}>
+          value={String(value || "")}
+          onValueChange={value => handleDataChange(name, value)}>
           <SelectTrigger className="">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {[...templates.entries()].map(template => (
+            {/* {[...templates.entries()].map(template => (
               <SelectItem
                 key={template[0]}
                 value={template[0].toString()}
                 textValue={template[1]}>
                 {template[1]}
               </SelectItem>
-            ))}
+            ))} */}
           </SelectContent>
         </Select>
       )
@@ -232,37 +205,38 @@ export const SelectedFileDisplay = ({
       case "string":
         return (
           <Input
-            value={value || ""}
-            onChange={e => handleDataChange(field.name, e.target.value)}
+            value={String(value || "")}
+            onChange={e => handleDataChange(name, e.target.value)}
           />
         )
       case "number":
         return (
           <Input
             type="number"
-            value={value || ""}
-            onChange={e => handleDataChange(field.name, e.target.value)}
+            value={String(value || "")}
+            onChange={e => handleDataChange(name, e.target.value)}
           />
         )
-      case "date":
+      case "datetime":
         return (
           <Input
             type="date"
-            value={value || ""}
-            onChange={e => handleDataChange(field.name, e.target.value)}
+            value={String(value || "")}
+            onChange={e => handleDataChange(name, e.target.value)}
           />
         )
-      case "array":
+      case "array": {
+        const arrayValue = Array.isArray(value) ? value : []
         return (
           <div className="space-y-2">
-            {(value || []).map((item: string, index: number) => (
+            {arrayValue.map((item: string, index: number) => (
               <div key={index} className="flex items-center space-x-2">
                 <Input
                   value={item}
                   onChange={e => {
-                    const newValue = [...value]
+                    const newValue = [...arrayValue]
                     newValue[index] = e.target.value
-                    handleDataChange(field.name, newValue)
+                    handleDataChange(name, newValue)
                   }}
                 />
                 <Button
@@ -270,10 +244,10 @@ export const SelectedFileDisplay = ({
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    const newValue = value.filter(
+                    const newValue = arrayValue.filter(
                       (_: string, i: number) => i !== index
                     )
-                    handleDataChange(field.name, newValue)
+                    handleDataChange(name, newValue)
                   }}>
                   Remove
                 </Button>
@@ -283,23 +257,21 @@ export const SelectedFileDisplay = ({
               type="button"
               variant="outline"
               size="sm"
-              onClick={() =>
-                handleDataChange(field.name, [...(value || []), ""])
-              }>
+              onClick={() => handleDataChange(name, [...arrayValue, ""])}>
               Add Item
             </Button>
           </div>
         )
-      case "plaintext":
+      }
+      case "text":
         return (
           <AutoResizeTextarea
             key={file.id}
             className="flex-grow h-20 font-mono resize-none"
             placeholder="Enter your content here..."
-            value={value || ""}
+            value={String(value || "")}
             onInput={e => {
-              console.log("handling change", field, e.currentTarget.value)
-              handleDataChange(field.name, e.currentTarget.value)
+              handleDataChange(name, e.currentTarget.value)
             }}
           />
         )
@@ -308,22 +280,17 @@ export const SelectedFileDisplay = ({
     }
   }
 
-  if (templates.size === 0) {
-    console.error("No templates found")
-    return null
-  }
-
   return (
     <div className="relative z-0 flex flex-col items-center justify-center flex-1 h-screen pt-12 min-w-96 bg-zinc-700">
       <header className="absolute top-0 left-0 right-0 flex items-center w-full h-8 max-w-full px-4 mb-auto overflow-hidden font-mono text-sm font-medium border-b border-black shadow-xl text-zinc-300 bg-zinc-900 text-nowrap text-ellipsis">
         {file.name}
 
         <a
-          href={file.url}
+          href={file.tryGetField("url")?.toString()}
           target="_blank"
           className="flex-grow ml-2 mr-auto overflow-hidden border-pink-400 text-zinc-400 text-nowrap text-ellipsis"
           rel="noopener noreferrer">
-          {file.url}
+          {file.tryGetField("url")?.toString()}
         </a>
         {file.type !== "template" && (
           <Button
@@ -344,13 +311,18 @@ export const SelectedFileDisplay = ({
       </header>
 
       <Card className="w-5/6 p-4 my-10 overflow-y-scroll">
-        {type === "asset" ? (
+        {file.type === "asset" ? (
           <div className="flex flex-col gap-2">
-            <img src={file.blob_url} alt="Selected Asset" />
+            <img
+              src={file.tryGetField("url")?.toString()}
+              alt="Selected Asset"
+            />
           </div>
         ) : (
           <div className="flex flex-col h-full space-y-2">
-            {schema.fields.map(renderFieldWithLabel)}
+            {Array.from(fields).map(([name, field]) =>
+              renderFieldWithLabel(name, field as OrganUserModelField)
+            )}
           </div>
         )}
       </Card>
