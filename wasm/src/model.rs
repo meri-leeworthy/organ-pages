@@ -611,7 +611,7 @@ impl Collection {
                 };
 
                 // Extract field type
-                let field_type = match field_map.get("type") {
+                let field_type = match field_map.get("field_type") {
                     Some(ValueOrContainer::Value(LoroValue::String(type_str))) => {
                         match type_str.as_str() {
                             "richtext" => FieldType::RichText,
