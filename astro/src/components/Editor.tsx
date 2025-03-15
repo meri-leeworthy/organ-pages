@@ -1,4 +1,4 @@
-import type { FileData } from "@/lib/types"
+// import type { FileData } from "@/lib/types"
 import { EditorContent, useEditor } from "@tiptap/react"
 import type { Editor } from "@tiptap/core"
 import Document from "@tiptap/extension-document"
@@ -21,7 +21,8 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Button } from "./ui/button"
 import { DropdownMenu, DropdownMenuTrigger } from "./ui/dropdown-menu"
-import { ImageSelector } from "./ImageSelector"
+import type { File } from "@/wasm-worker/types"
+// import { ImageSelector } from "./ImageSelector"
 
 const extensions = [
   Document,
@@ -39,12 +40,12 @@ export function EditorComponent({
   file,
   onChange,
 }: {
-  file: FileData
+  file: File
   onChange: (html: string) => void
 }) {
   const editor = useEditor({
     extensions: extensions,
-    content: file.data?.body?.content || "",
+    content: file.body?.content || "",
     editorProps: {
       attributes: {
         class: "prose prose-sm sm:prose-base focus:outline-none",
@@ -101,7 +102,7 @@ export function Toolbar({ editor }: { editor: Editor }) {
             <ImageIcon className="w-4 h-4" />
           </Button>
         </DropdownMenuTrigger>
-        <ImageSelector editor={editor} />
+        {/* <ImageSelector editor={editor} /> */}
       </DropdownMenu>
     </div>
   )

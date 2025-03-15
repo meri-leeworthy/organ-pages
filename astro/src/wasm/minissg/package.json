@@ -5,13 +5,11 @@
   "files": [
     "minissg_bg.wasm",
     "minissg.js",
-    "minissg_bg.js",
     "minissg.d.ts"
   ],
   "main": "minissg.js",
   "types": "minissg.d.ts",
   "sideEffects": [
-    "./minissg.js",
     "./snippets/*"
   ]
 }

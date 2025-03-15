@@ -3,6 +3,61 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 
+// Type definitions to match the TypeScript interfaces
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ProjectType {
+    Site,
+    Theme,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CollectionType {
+    Page,
+    Post,
+    Template,
+    Partial,
+    Asset,
+    Text,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
+pub enum FieldType {
+    RichText,
+    Text,
+    List,
+    Map,
+    DateTime,
+    String,
+    Number,
+    Object,
+    Array,
+    Blob,
+}
+
+impl FieldType {
+    pub fn to_string(&self) -> String {
+        match self {
+            FieldType::RichText => "richtext".to_string(),
+            FieldType::Text => "text".to_string(),
+            FieldType::List => "list".to_string(),
+            FieldType::Map => "map".to_string(),
+            FieldType::DateTime => "datetime".to_string(),
+            FieldType::String => "string".to_string(),
+            FieldType::Number => "number".to_string(),
+            FieldType::Object => "object".to_string(),
+            FieldType::Array => "array".to_string(),
+            FieldType::Blob => "blob".to_string(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FieldDefinition {
+    pub name: String,
+    pub field_type: FieldType,
+    pub required: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Collection {
     Asset,

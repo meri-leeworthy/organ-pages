@@ -10,13 +10,57 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_test::wasm_bindgen_test;
 
+mod actor;
+mod events;
+mod messages;
+mod model;
 mod types;
 
+// Re-export our public components
+pub use actor::Actor;
+pub use events::EventEmitter;
 use types::*;
+
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
     fn log(s: &str); // log to JS console
+}
+
+use js_sys::{JsString, Promise};
+use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
+
+// Import the JavaScript functions
+#[wasm_bindgen(module = "/indexeddb.js")]
+extern "C" {
+    fn saveToIndexedDB(db_name: &str, store_name: &str, key: &str, value: &JsValue) -> Promise;
+    fn loadFromIndexedDB(db_name: &str, store_name: &str, key: &str) -> Promise;
+}
+
+// Asynchronous function to save data to IndexedDB
+#[wasm_bindgen]
+pub async fn save_data(
+    db_name: String,
+    store_name: String,
+    key: String,
+    value: js_sys::Uint8Array,
+) -> Result<(), JsValue> {
+    let promise = saveToIndexedDB(&db_name, &store_name, &key, &value);
+    JsFuture::from(promise).await?;
+    Ok(())
+}
+
+// Asynchronous function to load data from IndexedDB
+#[wasm_bindgen]
+pub async fn load_data(
+    db_name: String,
+    store_name: String,
+    key: String,
+) -> Result<JsString, JsValue> {
+    let promise = loadFromIndexedDB(&db_name, &store_name, &key);
+    let result = JsFuture::from(promise).await?;
+    Ok(result.into())
 }
 
 #[wasm_bindgen(start)]

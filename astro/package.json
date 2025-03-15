@@ -3,12 +3,12 @@
   "type": "module",
   "version": "0.0.1",
   "scripts": {
-    "build": "astro check && astro build",
+    "build": "npm run wasm && astro check && astro build",
     "dev": "astro dev",
     "start": "astro dev",
     "preview": "astro preview",
     "astro": "astro",
-    "wasm": "cd ../wasm && wasm-pack build --target bundler --out-dir ../astro/src/wasm/minissg"
+    "wasm": "cd ../wasm && wasm-pack build --target web --out-dir ../astro/src/wasm/minissg"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",
@@ -56,6 +56,7 @@
     "react-hook-form": "^7.54.1",
     "react-resizable-panels": "^2.1.4",
     "sonner": "^1.7.4",
+    "swr": "^2.3.3",
     "tailwind-merge": "^2.5.4",
     "tailwindcss": "^3.4.14",
     "tailwindcss-animate": "^1.0.7",

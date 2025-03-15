@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react"
-import { headingMap, type Collection, type SelectedFiles } from "../lib/types"
+import { useState } from "react"
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "./ui/collapsible"
 import { Plus } from "lucide-react"
-import { useStoreContext } from "./StoreContext"
+import { useStore } from "./StoreProvider"
+import { useFiles } from "@/hooks/useSWRStore"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,61 +18,69 @@ import {
   SidebarGroupAction,
   SidebarGroupLabel,
 } from "./ui/sidebar"
-
-import { useBlobStore } from "./useBlobStore"
-// import { loadAssetFile, loadTextFile } from "@/lib/loadFile"
 import { FileListItem } from "./FileListItem"
-import type { File } from "@/lib/File"
+import { Spinner } from "./ui/spinner"
+
+// Mapping for collection type to display name
+const headingMap = {
+  pages: "Pages",
+  posts: "Posts",
+  templates: "Templates",
+  partials: "Partials",
+  assets: "Assets",
+  styles: "Styles",
+  scripts: "Scripts",
+}
 
 export function FileList({ type }: { type: string }) {
   const [isOpen, setIsOpen] = useState<boolean>(true)
+  const { state, createFile } = useStore()
+  const { files, isLoading, error, refreshFiles } = useFiles(
+    state.activeProjectType,
+    type
+  )
 
-  const { store, loading, error } = useStoreContext()
-  // const blobStore = useBlobStore()
+  const handleCreateFile = async () => {
+    if (!state.activeProjectType) return
 
-  const files = store.activeProject?.getCollection(type).files
-
-  if (loading) return <div>Loading...</div>
-  if (error) return <div>Error: {error.message}</div>
-
-  const handleCreateFile = (type: string) => {
-    if (loading || error) return
-
-    // Function to generate unique filename
-    const generateUniqueFileName = (
-      baseName: string,
-      files: Map<string, File>
-    ) => {
-      let fileName = `${baseName}`
+    try {
+      // Generate a unique filename
+      const baseName = "untitled"
+      let fileName = baseName
       let counter = 1
 
       // Check if file with this name already exists
-      while ([...files.values()].some(file => file.name === fileName)) {
+      while (files.some(file => file.name === fileName)) {
         fileName = `${baseName}${counter}`
         counter++
       }
 
-      return fileName
+      // Create the new file
+      await createFile(state.activeProjectType, type, fileName)
+
+      // Refresh the file list
+      refreshFiles()
+    } catch (err) {
+      console.error("Failed to create file:", err)
     }
-
-    // const newFileName = generateUniqueFileName("untitled", files)
-
-    // const newFile = store.activeProject?.createFile(newFileName, type)
   }
 
-  const handleLoadFile = async (type: string) => {
-    if (loading || error) return
+  const handleLoadFile = async () => {
+    if (!state.activeProjectType) return
+
     const input = document.createElement("input")
     input.type = "file"
 
     const loadExtensionMap = {
-      template: ".html,.htm,.hbs",
-      partial: ".html,.htm,.hbsp",
-      page: ".md",
-      post: ".md",
-      text: "*",
-      asset: "*",
-    } as const
+      templates: ".html,.htm,.hbs",
+      partials: ".html,.htm,.hbsp",
+      pages: ".md",
+      posts: ".md",
+      styles: ".css",
+      scripts: ".js",
+      assets: "*",
+    }
+
     input.accept =
       type in loadExtensionMap
         ? loadExtensionMap[type as keyof typeof loadExtensionMap]
@@ -81,26 +89,15 @@ export function FileList({ type }: { type: string }) {
     input.onchange = async (e: Event) => {
       const file = (e.target as HTMLInputElement).files?.[0]
       if (file) {
-        if (type === "asset") {
-          // parse file and add to database
-          // const newFile = await loadAssetFile(file, execute, blobStore)
-          // setFiles(files => files.set(newFile.id, newFile))
-          // setSelectedFiles(selectedFiles => ({
-          //   activeFileId: newFile.id,
-          //   contentFileId: selectedFiles.contentFileId,
-          // }))
-        } else {
-          // parse file and add to database
-          // const newFile = await loadTextFile(file, type, execute)
-          // setFiles(files => files.set(newFile.id, newFile))
-          // setSelectedFiles(selectedFiles => ({
-          //   activeFileId: newFile.id,
-          //   contentFileId:
-          //     type === "page" ? newFile.id : selectedFiles.contentFileId,
-          // }))
-        }
+        // Here you would implement file loading logic
+        // This is a placeholder for future implementation
+        console.log(`Loading file ${file.name} for collection ${type}`)
+
+        // After loading the file, refresh the list
+        refreshFiles()
       }
     }
+
     input.click()
   }
 
@@ -124,12 +121,12 @@ export function FileList({ type }: { type: string }) {
               <Plus className="w-4 h-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              {type === "asset" ? null : (
-                <DropdownMenuItem onClick={() => handleCreateFile(type)}>
+              {type === "assets" ? null : (
+                <DropdownMenuItem onClick={handleCreateFile}>
                   New File
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem onClick={() => handleLoadFile(type)}>
+              <DropdownMenuItem onClick={handleLoadFile}>
                 Load File
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -137,9 +134,23 @@ export function FileList({ type }: { type: string }) {
         </SidebarGroupAction>
 
         <CollapsibleContent>
-          <ul className="">
-            {files?.map(file => <FileListItem key={file.id} file={file} />)}
-          </ul>
+          {isLoading ? (
+            <div className="flex justify-center py-2">
+              <Spinner size="sm" />
+            </div>
+          ) : error ? (
+            <div className="px-2 py-1 text-sm text-red-400">
+              Failed to load files
+            </div>
+          ) : files.length === 0 ? (
+            <div className="px-2 py-1 text-sm text-zinc-500">No files</div>
+          ) : (
+            <ul>
+              {files.map(file => (
+                <FileListItem key={file.id} file={file} />
+              ))}
+            </ul>
+          )}
         </CollapsibleContent>
       </SidebarGroup>
     </Collapsible>

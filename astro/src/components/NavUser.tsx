@@ -34,8 +34,6 @@ export function NavUser() {
   const [showLoginDialog, setShowLoginDialog] = useState(false)
   const [showRegisterDialog, setShowRegisterDialog] = useState(false)
 
-  console.log("User: ", user)
-
   if (!isLoggedIn) {
     return (
       <>

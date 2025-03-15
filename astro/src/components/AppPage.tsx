@@ -1,18 +1,18 @@
 import { Suspense, useEffect, useState } from "react"
 import { AppSidebar } from "./AppSidebar"
-import { useStoreContext } from "./StoreContext"
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "./ui/resizable"
-import { FileContainer } from "./FileContainer"
-import { Preview } from "./Preview"
+// import { FileContainer } from "./FileContainer"
+// import { Preview } from "./Preview"
 import { SelectedFileDisplay } from "./SelectedFileDisplay"
+import { useActiveFile } from "@/hooks/useSWRStore"
 
 export function AppPage() {
   const [isVertical, setIsVertical] = useState(false)
-  const { store } = useStoreContext()
+  const { setActiveFile, activeFileId } = useActiveFile()
 
   useEffect(() => {
     const handleResize = () => {
@@ -32,26 +32,27 @@ export function AppPage() {
   return (
     <>
       <AppSidebar />
-      {store.activeProject?.activeFile ? (
+      {activeFileId ? (
         <ResizablePanelGroup direction={isVertical ? "vertical" : "horizontal"}>
           <ResizablePanel>
             <div className="flex-grow h-full">
               <Suspense fallback={<div>Loading...</div>}>
                 <SelectedFileDisplay
                   onClose={() => {
-                    store.activeProject!.activeFile = null
+                    setActiveFile(undefined)
                   }}
                 />
               </Suspense>
             </div>
           </ResizablePanel>
           <ResizableHandle className="bg-zinc-700" />
-          <ResizablePanel maxSize={70}>
+          {/* <ResizablePanel maxSize={70}>
             <Preview />
-          </ResizablePanel>
+          </ResizablePanel> */}
         </ResizablePanelGroup>
       ) : (
-        <Preview />
+        // <Preview />
+        <div>No file selected</div>
       )}
     </>
   )

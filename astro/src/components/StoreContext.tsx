@@ -6,7 +6,7 @@ import React, {
 } from "react"
 import useStore from "@/hooks/useStore"
 import { Alert } from "./ui/alert"
-import type { Store } from "@/lib/Store"
+import type { StoreAdapter } from "@/lib/StoreAdapter"
 
 interface StoreProviderProps {
   children: ReactNode
@@ -14,7 +14,7 @@ interface StoreProviderProps {
 
 const StoreContext = createContext<
   | {
-      store: Store
+      store: StoreAdapter
       loading: boolean
       error: Error | null
     }
@@ -25,11 +25,8 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children }) => {
   const { store, loading, error } = useStore()
   const [, forceUpdate] = useState(0)
 
-  useEffect(() => {
-    store.on("update", () => {
-      forceUpdate(prev => prev + 1)
-    })
-  }, [store])
+  // We don't need to manually register for updates as it's handled in the useStore hook now
+  // The hook already registers a listener for 'update' events and handles refreshing
 
   if (loading) {
     return (

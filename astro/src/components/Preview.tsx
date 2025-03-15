@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react"
-import { useStoreContext } from "./StoreContext.jsx"
+import { useStore } from "./StoreProvider.jsx"
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert.jsx"
-import useRender from "@/hooks/useRender.js"
+import { useRender } from "@/hooks/useRender.js"
 
 export const Preview = () => {
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const [iframeLoaded, setIframeLoaded] = useState<boolean>(false)
 
-  const { store, loading: storeLoading, error: storeError } = useStoreContext()
+  const { state, setActiveContext } = useStore()
   const { loading: wasmLoading, error: wasmError, renderLocal } = useRender()
 
   function getBodyContent(htmlString: string) {
@@ -24,16 +24,7 @@ export const Preview = () => {
   }
 
   useEffect(() => {
-    if (
-      !store ||
-      storeLoading ||
-      storeError ||
-      wasmLoading ||
-      !iframeLoaded ||
-      !store.activeProject?.activeFile ||
-      !store.activeProject?.activePage
-    )
-      return
+    if (!state || wasmLoading || !iframeLoaded || !state.activeContext) return
 
     const handleRender = () => {
       try {
