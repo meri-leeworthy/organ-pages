@@ -1,9 +1,10 @@
 use crate::types::{
     CollectionType, ContentRecord, FieldDefinition, FieldType, ProjectType, UnparsedContentRecord,
 };
+use js_sys::Object;
 use loro::{
-    Container, ExportMode, LoroDoc, LoroList, LoroMap, LoroStringValue, LoroText, LoroTree,
-    LoroValue, TreeID, TreeNode, ValueOrContainer,
+    Container, ContainerID, ContainerTrait, ExportMode, LoroDoc, LoroList, LoroMap,
+    LoroStringValue, LoroText, LoroTree, LoroValue, TreeID, TreeNode, ValueOrContainer,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -49,6 +50,21 @@ impl Model {
 pub struct Store {
     active_theme: RwLock<Option<Project>>,
     active_site: RwLock<Option<Project>>,
+    // Document storage for ProseMirror/Loro integration
+    documents: RwLock<HashMap<String, Document>>,
+}
+
+// Constants for ProseMirror-Loro integration
+pub const ROOT_DOC_KEY: &str = "doc";
+pub const ATTRIBUTES_KEY: &str = "attributes";
+pub const CHILDREN_KEY: &str = "children";
+pub const NODE_NAME_KEY: &str = "nodeName";
+
+// Document structure for ProseMirror/Loro integration
+pub struct Document {
+    pub id: String,
+    pub version: u32,
+    pub doc: LoroDoc,
 }
 
 impl Store {
@@ -56,8 +72,715 @@ impl Store {
         let store = Store {
             active_theme: RwLock::new(None),
             active_site: RwLock::new(None),
+            documents: RwLock::new(HashMap::new()),
         };
         store
+    }
+
+    // Document methods for ProseMirror integration
+
+    /// Initialize a new document or get existing one
+    pub fn initialize_document(&self, document_id: &str, schema_json: &str) -> Result<(), String> {
+        let mut documents = self.documents.write().unwrap();
+
+        if !documents.contains_key(document_id) {
+            console_log!("Creating new document: {}", document_id);
+
+            // Create a new Loro document
+            let loro_doc = LoroDoc::new();
+
+            // Configure text style for marks if schema is provided
+            if !schema_json.is_empty() {
+                self.configure_text_style(&loro_doc, schema_json)?;
+            }
+
+            // Initialize the document structure according to Loro-ProseMirror convention
+            let root_map = loro_doc.get_map(ROOT_DOC_KEY);
+            root_map.insert(NODE_NAME_KEY, "doc".to_string());
+
+            // Add attributes map
+            let attrs_map = LoroMap::new();
+            root_map.insert_container(ATTRIBUTES_KEY, attrs_map);
+
+            // Add children list
+            let children_list = LoroList::new();
+            root_map.insert_container(CHILDREN_KEY, children_list);
+
+            // Get reference to children list
+            let children = match root_map.get(CHILDREN_KEY) {
+                Some(ValueOrContainer::Container(Container::List(list))) => list,
+                _ => return Err("Failed to get children list".to_string()),
+            };
+
+            // Create paragraph map
+            let para_map = LoroMap::new();
+            para_map.insert(NODE_NAME_KEY, "paragraph".to_string());
+
+            // Add paragraph attributes
+            let para_attrs = LoroMap::new();
+            para_map.insert_container(ATTRIBUTES_KEY, para_attrs);
+
+            // Add paragraph children list
+            let para_children = LoroList::new();
+            para_map.insert_container(CHILDREN_KEY, para_children);
+
+            // Add paragraph to document children
+            children.insert_container(0, para_map);
+
+            let para_map = match children.get(0) {
+                Some(ValueOrContainer::Container(Container::Map(map))) => map,
+                _ => return Err("Failed to get paragraph map".to_string()),
+            };
+
+            let para_children = match para_map.get(CHILDREN_KEY) {
+                Some(ValueOrContainer::Container(Container::List(list))) => list,
+                _ => return Err("Failed to get paragraph children list".to_string()),
+            };
+
+            // Create text node with space to avoid empty text node errors
+            // In Loro-ProseMirror, text nodes are LoroText directly, not maps with text props
+            let text = LoroText::new();
+            text.insert(0, " "); // Space character to avoid empty text node errors
+
+            // Add text to paragraph children
+            para_children.insert_container(0, text);
+
+            // Store the document
+            let doc = Document {
+                id: document_id.to_string(),
+                version: 0,
+                doc: loro_doc,
+            };
+
+            documents.insert(document_id.to_string(), doc);
+            console_log!("Document created successfully: {}", document_id);
+        } else {
+            console_log!("Document already exists: {}", document_id);
+        }
+
+        Ok(())
+    }
+
+    /// Configure text style expansion behavior based on ProseMirror schema
+    fn configure_text_style(&self, doc: &LoroDoc, schema_json: &str) -> Result<(), String> {
+        // Parse the schema to extract mark definitions
+        let schema: serde_json::Value = match serde_json::from_str(schema_json) {
+            Ok(schema) => schema,
+            Err(e) => {
+                console_log!("Error parsing schema JSON: {}", e);
+                return Err(format!("Failed to parse schema JSON: {}", e));
+            }
+        };
+
+        // Extract marks from schema
+        let marks = match schema.get("marks") {
+            Some(marks) => marks,
+            None => {
+                // If no marks defined, use empty config
+                return Ok(());
+            }
+        };
+
+        // Build text style config map (for logging/debugging)
+        let mut text_style_config = HashMap::new();
+
+        // Process each mark and call configTextStyle
+        if let Some(marks_obj) = marks.as_object() {
+            for (mark_name, mark_def) in marks_obj {
+                // Default to "after" for inclusive marks (matching the JS implementation)
+                let expand = match mark_def.get("inclusive") {
+                    Some(inclusive) if inclusive.as_bool() == Some(true) => "after",
+                    _ => "none", // Non-inclusive marks default to "none"
+                };
+
+                // Store the config for logging
+                text_style_config.insert(mark_name.clone(), expand);
+
+                // In a real implementation, we would call configTextStyle on the doc
+                // doc.config_text_style(mark_name, expand);
+            }
+        }
+
+        // Log the configuration for debugging
+        console_log!("Text style config: {:?}", text_style_config);
+
+        // Note: In a real implementation, you'd need to extend the Loro WASM bindings
+        // to support configTextStyle. Here we're just preparing the configuration
+        // but not applying it since the binding isn't available.
+
+        Ok(())
+    }
+
+    /// Get a document and convert it to ProseMirror JSON format
+    pub fn get_document(&self, document_id: &str) -> Result<(Value, u32), String> {
+        let documents = self.documents.read().unwrap();
+
+        match documents.get(document_id) {
+            Some(document) => {
+                console_log!(
+                    "Getting document: {}, version: {}",
+                    document_id,
+                    document.version
+                );
+
+                // Convert from Loro document to ProseMirror JSON format
+                let doc_json = self.loro_doc_to_pm_doc(&document.doc)?;
+
+                Ok((doc_json, document.version))
+            }
+            None => Err(format!("Document not found: {}", document_id)),
+        }
+    }
+
+    /// Apply ProseMirror steps to a Loro document
+    pub fn apply_steps(
+        &self,
+        document_id: &str,
+        steps: &[Value],
+        client_id: &str,
+        version: u32,
+    ) -> Result<u32, String> {
+        let mut documents = self.documents.write().unwrap();
+
+        match documents.get_mut(document_id) {
+            Some(document) => {
+                console_log!(
+                    "Applying steps to document: {}, current version: {}, incoming version: {}",
+                    document_id,
+                    document.version,
+                    version
+                );
+
+                // Version check for conflict handling
+                if version != document.version {
+                    console_log!(
+                        "Version mismatch - current: {}, received: {}",
+                        document.version,
+                        version
+                    );
+                    // For now, we'll accept the steps but warn about potential conflicts
+                    // In a real-world scenario, you'd implement proper OT conflict resolution
+                }
+
+                // Apply the steps to the Loro document
+                self.apply_steps_to_loro_doc(&mut document.doc, steps)
+                    .map_err(|e| format!("Failed to apply steps: {:?}", e))?;
+
+                // Increment version
+                document.version += 1;
+
+                console_log!(
+                    "Steps applied successfully, new version: {}",
+                    document.version
+                );
+
+                Ok(document.version)
+            }
+            None => Err(format!("Document not found: {}", document_id)),
+        }
+    }
+
+    fn text_to_pm_node(&self, text: &LoroText) -> Vec<Value> {
+        // Handle text nodes - these are LoroText objects directly
+        if text.len_unicode() > 0 {
+            // Get the Delta format which includes formatting
+            let mut content = Vec::new();
+            for delta_item in text.to_delta() {
+                let insert_tuple = match delta_item.as_insert() {
+                    Some(i) => i,
+                    None => continue,
+                };
+
+                let (insert, attributes) = insert_tuple;
+
+                if insert.len() == 0 {
+                    continue;
+                }
+
+                // Process marks if any
+                let marks = match attributes {
+                    Some(attributes) => {
+                        let mark_array: Vec<Value> = attributes
+                            .iter()
+                            .map(|(name, value)| {
+                                json!({
+                                    "type": name,
+                                    "attrs": value
+                                })
+                            })
+                            .collect();
+
+                        if mark_array.is_empty() {
+                            Value::Null
+                        } else {
+                            Value::Array(mark_array)
+                        }
+                    }
+                    None => Value::Null,
+                };
+
+                // Add the text node
+                content.push(json!({
+                    "type": "text",
+                    "text": insert,
+                    "marks": marks
+                }));
+            }
+            content
+        } else {
+            // Empty text, but add a space to avoid errors
+            vec![json!({
+                "type": "text",
+                "text": " ",
+                "marks": Value::Null
+            })]
+        }
+    }
+
+    /// Helper to convert Loro doc to ProseMirror JSON format
+    fn loro_doc_to_pm_doc(&self, loro_doc: &LoroDoc) -> Result<Value, String> {
+        console_log!("Converting Loro doc to ProseMirror format");
+
+        // Get the root map using the constant for consistency
+        let root_doc = loro_doc.get_map(ROOT_DOC_KEY);
+
+        // Get node type (nodeName in the Loro-ProseMirror convention)
+        let node_type = match root_doc.get(NODE_NAME_KEY) {
+            Some(ValueOrContainer::Value(LoroValue::String(s))) => s.to_string(),
+            _ => {
+                return Err(format!(
+                    "Document root missing '{}' attribute",
+                    NODE_NAME_KEY
+                ))
+            }
+        };
+
+        // Get attributes map
+        let attrs = match root_doc.get(ATTRIBUTES_KEY) {
+            Some(ValueOrContainer::Container(Container::Map(attrs_map))) => {
+                // Convert attributes to JSON object
+                let mut attrs_obj = Map::new();
+                attrs_map.for_each(|key, value| match value {
+                    ValueOrContainer::Value(LoroValue::String(s)) => {
+                        attrs_obj.insert(key.to_string(), Value::String(s.to_string()));
+                    }
+                    ValueOrContainer::Value(LoroValue::Bool(b)) => {
+                        attrs_obj.insert(key.to_string(), Value::Bool(b));
+                    }
+                    ValueOrContainer::Value(LoroValue::Double(n)) => {
+                        if let Some(num) = serde_json::Number::from_f64(n) {
+                            attrs_obj.insert(key.to_string(), Value::Number(num));
+                        }
+                    }
+                    ValueOrContainer::Value(LoroValue::I64(n)) => {
+                        attrs_obj
+                            .insert(key.to_string(), Value::Number(serde_json::Number::from(n)));
+                    }
+                    _ => {}
+                });
+
+                if attrs_obj.is_empty() {
+                    Value::Null
+                } else {
+                    Value::Object(attrs_obj)
+                }
+            }
+            _ => Value::Null, // No attributes
+        };
+
+        // Get children list
+        let children_list = match root_doc.get(CHILDREN_KEY) {
+            Some(ValueOrContainer::Container(Container::List(list))) => list,
+            _ => return Err(format!("Document root missing '{}' list", CHILDREN_KEY)),
+        };
+
+        // Convert children items
+        let mut content_json = Vec::new();
+
+        for i in 0..children_list.len() {
+            match children_list.get(i) {
+                Some(ValueOrContainer::Container(Container::Map(node_map))) => {
+                    // Handle regular nodes (non-text)
+                    let node_json = self.convert_loro_map_to_pm_node(&node_map)?;
+                    content_json.push(node_json);
+                }
+                Some(ValueOrContainer::Container(Container::Text(text))) => {
+                    content_json.extend(self.text_to_pm_node(&text));
+                }
+                _ => {
+                    console_log!("Skipping unsupported child type at index {}", i);
+                }
+            }
+        }
+
+        // Construct the root document node
+        let doc_json = json!({
+            "type": node_type,
+            "attrs": attrs,
+            "content": content_json
+        });
+
+        Ok(doc_json)
+    }
+
+    /// Helper to convert a Loro map (non-text node) to a ProseMirror node
+    fn convert_loro_map_to_pm_node(&self, map: &LoroMap) -> Result<Value, String> {
+        // Get node type (nodeName in the Loro-ProseMirror convention)
+        let node_type = match map.get(NODE_NAME_KEY) {
+            Some(ValueOrContainer::Value(LoroValue::String(s))) => s.to_string(),
+            _ => return Err(format!("Node missing '{}' attribute", NODE_NAME_KEY)),
+        };
+
+        // Get attributes as (pre-)JSON map
+        let attrs = match map.get(ATTRIBUTES_KEY) {
+            Some(ValueOrContainer::Container(Container::Map(attrs_map))) => {
+                // Convert attributes to JSON object
+                let mut attrs_obj = Map::new();
+                attrs_map.for_each(|key, value| match value {
+                    ValueOrContainer::Value(LoroValue::String(s)) => {
+                        attrs_obj.insert(key.to_string(), Value::String(s.to_string()));
+                    }
+                    ValueOrContainer::Value(LoroValue::Bool(b)) => {
+                        attrs_obj.insert(key.to_string(), Value::Bool(b));
+                    }
+                    ValueOrContainer::Value(LoroValue::Double(n)) => {
+                        if let Some(num) = serde_json::Number::from_f64(n) {
+                            attrs_obj.insert(key.to_string(), Value::Number(num));
+                        }
+                    }
+                    ValueOrContainer::Value(LoroValue::I64(n)) => {
+                        attrs_obj
+                            .insert(key.to_string(), Value::Number(serde_json::Number::from(n)));
+                    }
+                    _ => {}
+                });
+
+                if attrs_obj.is_empty() {
+                    Value::Null
+                } else {
+                    Value::Object(attrs_obj)
+                }
+            }
+            _ => Value::Null, // No attributes
+        };
+
+        // Get children list
+        let children_list = match map.get(CHILDREN_KEY) {
+            Some(ValueOrContainer::Container(Container::List(list))) => list,
+            _ => {
+                // Node has no children, return node without content
+                return Ok(json!({
+                    "type": node_type,
+                    "attrs": attrs
+                }));
+            }
+        };
+
+        // Convert children
+        let mut content = Vec::new();
+
+        for i in 0..children_list.len() {
+            match children_list.get(i) {
+                Some(ValueOrContainer::Container(Container::Map(child_map))) => {
+                    // Recurse for regular node children (do we need a max tree depth?)
+                    match self.convert_loro_map_to_pm_node(&child_map) {
+                        Ok(node_json) => content.push(node_json),
+                        Err(e) => console_log!("Error converting child node: {}", e),
+                    }
+                }
+                Some(ValueOrContainer::Container(Container::Text(text))) => {
+                    // For text nodes
+                    content.extend(self.text_to_pm_node(&text));
+                }
+                _ => {
+                    console_log!("Skipping unsupported child type at index {}", i);
+                }
+            }
+        }
+
+        let content = if content.is_empty() {
+            Value::Null
+        } else {
+            Value::Array(content)
+        };
+
+        // Return complete node
+        Ok(json!({
+            "type": node_type,
+            "attrs": attrs,
+            "content": content
+        }))
+    }
+
+    /// Helper to find a text node and its position in the document based on prosemirror position
+    fn find_text_at_position(&self, loro_doc: &LoroDoc, position: usize) -> Result<(LoroText, usize, usize), String> {
+        // Get the root map
+        let root_map = loro_doc.get_map(ROOT_DOC_KEY);
+        
+        // Make sure it has a children list
+        let children = match root_map.get(CHILDREN_KEY) {
+            Some(ValueOrContainer::Container(Container::List(list))) => list,
+            _ => return Err("Document root missing children list".to_string()),
+        };
+        
+        // Keep track of the current position as we traverse the document
+        let mut current_pos = 0;
+        
+        // Iterate through the top-level nodes (paragraphs, etc.)
+        for i in 0..children.len() {
+            match children.get(i) {
+                Some(ValueOrContainer::Container(Container::Map(node_map))) => {
+                    // Get the node's children
+                    let node_children = match node_map.get(CHILDREN_KEY) {
+                        Some(ValueOrContainer::Container(Container::List(list))) => list,
+                        _ => continue, // Skip nodes without children
+                    };
+                    
+                    // Iterate through the node's children
+                    for j in 0..node_children.len() {
+                        match node_children.get(j) {
+                            Some(ValueOrContainer::Container(Container::Text(text))) => {
+                                // Calculate the start and end position of this text node
+                                let text_len = text.len_unicode();
+                                let text_start = current_pos;
+                                let text_end = text_start + text_len;
+                                
+                                // Check if the position is within this text node
+                                if position >= text_start && position <= text_end {
+                                    // Return the text node, its start position, and relative position
+                                    return Ok((text.clone(), text_start, position - text_start));
+                                }
+                                
+                                // Move the current position forward
+                                current_pos += text_len;
+                            },
+                            _ => {
+                                // Other node types contribute to position in ProseMirror
+                                // For simplicity, we're assuming 1 position unit per non-text node
+                                current_pos += 1;
+                            }
+                        }
+                    }
+                    
+                    // Node boundaries also contribute to position in ProseMirror
+                    current_pos += 1;
+                },
+                Some(ValueOrContainer::Container(Container::Text(text))) => {
+                    // Direct text node at the root level
+                    let text_len = text.len_unicode();
+                    let text_start = current_pos;
+                    let text_end = text_start + text_len;
+                    
+                    if position >= text_start && position <= text_end {
+                        return Ok((text.clone(), text_start, position - text_start));
+                    }
+                    
+                    current_pos += text_len;
+                },
+                _ => {
+                    // Other container types - skip
+                    current_pos += 1;
+                }
+            }
+        }
+        
+        Err(format!("No text node found at position {}", position))
+    }
+
+    /// Apply ProseMirror steps to a Loro document
+    fn apply_steps_to_loro_doc(
+        &self,
+        loro_doc: &mut LoroDoc,
+        steps: &[Value],
+    ) -> Result<(), JsValue> {
+        console_log!("Applying steps to Loro document");
+
+        for step in steps {
+            let step_type = match step.get("stepType").and_then(|v| v.as_str()) {
+                Some(t) => t,
+                None => {
+                    console_log!("Step missing stepType: {:?}", step);
+                    continue;
+                }
+            };
+
+            match step_type {
+                "replace" => {
+                    // Extract from/to positions and slice content
+                    let from = step.get("from").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    let to = step.get("to").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+
+                    console_log!("Replace operation from {} to {}", from, to);
+
+                    // Check if this is a deletion (from != to with no content)
+                    if from != to {
+                        // Try to find the text node containing this range
+                        match self.find_text_at_position(loro_doc, from) {
+                            Ok((text, text_start, rel_from)) => {
+                                let rel_to = std::cmp::min(to, text_start + text.len_unicode()) - text_start;
+                                
+                                // Delete the text in this range
+                                if rel_from < rel_to {
+                                    let delete_len = rel_to - rel_from;
+                                    console_log!("Deleting text: from={}, len={}", rel_from, delete_len);
+                                    text.delete(rel_from, delete_len);
+                                }
+                            },
+                            Err(e) => {
+                                console_log!("Error finding text at position {}: {}", from, e);
+                            }
+                        }
+                    }
+
+                    // Check if there's content to insert
+                    if let Some(slice) = step.get("slice") {
+                        if let Some(content_arr) = slice.get("content").and_then(|v| v.as_array()) {
+                            if !content_arr.is_empty() {
+                                console_log!("Inserting content at position {}", from);
+                                
+                                // Try to find the text node at this position
+                                match self.find_text_at_position(loro_doc, from) {
+                                    Ok((text, _, rel_pos)) => {
+                                        // For simple text content, extract and insert
+                                        for item in content_arr {
+                                            if let Some(text_obj) = item.as_object() {
+                                                if let Some(text_type) = text_obj.get("type").and_then(|v| v.as_str()) {
+                                                    if text_type == "text" {
+                                                        if let Some(content) = text_obj.get("text").and_then(|v| v.as_str()) {
+                                                            console_log!("Inserting text: '{}' at position {}", content, rel_pos);
+                                                            
+                                                            // Insert the text with marks if present
+                                                            if let Some(marks) = text_obj.get("marks").and_then(|v| v.as_array()) {
+                                                                if !marks.is_empty() {
+                                                                    // Insert first, then apply marks
+                                                                    text.insert(rel_pos, content);
+                                                                    
+                                                                    // Apply marks to the inserted text
+                                                                    for mark in marks {
+                                                                        if let Some(mark_obj) = mark.as_object() {
+                                                                            if let Some(mark_type) = mark_obj.get("type").and_then(|v| v.as_str()) {
+                                                                                let attrs = mark_obj.get("attrs");
+                                                                                
+                                                                                // Format the text with this mark
+                                                                                // In a real implementation, we'd convert attrs to proper format
+                                                                                console_log!("Would apply mark '{}' to inserted text", mark_type);
+                                                                                
+                                                                                // This is where we'd apply the formatting
+                                                                                // text.format(rel_pos, content.len(), mark_type, attrs);
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                } else {
+                                                                    // Simple insert without marks
+                                                                    text.insert(rel_pos, content);
+                                                                }
+                                                            } else {
+                                                                // Simple insert without marks
+                                                                text.insert(rel_pos, content);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    Err(e) => {
+                                        console_log!("Error finding text at position {}: {}", from, e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                "addMark" => {
+                    // Extract from/to positions and mark information
+                    let from = step.get("from").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    let to = step.get("to").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+
+                    if let Some(mark) = step.get("mark") {
+                        let mark_type = mark.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        let mark_attrs = mark.get("attrs");
+
+                        console_log!("Adding mark '{}' from {} to {}", mark_type, from, to);
+
+                        // Try to find the text node for this range
+                        match self.find_text_at_position(loro_doc, from) {
+                            Ok((text, text_start, rel_from)) => {
+                                // Calculate relative end within this text node
+                                let rel_to = std::cmp::min(to, text_start + text.len_unicode()) - text_start;
+                                
+                                if rel_from < rel_to {
+                                    // Create format object for mark
+                                    let mut format_attrs = HashMap::new();
+                                    
+                                    // Convert mark_attrs to a HashMap if present
+                                    if let Some(attrs) = mark_attrs {
+                                        if let Some(attrs_obj) = attrs.as_object() {
+                                            for (key, value) in attrs_obj {
+                                                // Convert value to appropriate Loro format
+                                                // This is a simplified implementation
+                                                if let Some(val_str) = value.as_str() {
+                                                    format_attrs.insert(key.clone(), val_str.to_string());
+                                                } else if let Some(val_bool) = value.as_bool() {
+                                                    format_attrs.insert(key.clone(), val_bool.to_string());
+                                                } else if let Some(val_num) = value.as_f64() {
+                                                    format_attrs.insert(key.clone(), val_num.to_string());
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    // For real implementation: text.format(rel_from, rel_to - rel_from, mark_type, format_attrs);
+                                    console_log!("Would format text with '{}' from {} to {}", mark_type, rel_from, rel_to);
+                                }
+                            },
+                            Err(e) => {
+                                console_log!("Error finding text at position {}: {}", from, e);
+                            }
+                        }
+                    }
+                }
+
+                "removeMark" => {
+                    // Extract from/to positions and mark information
+                    let from = step.get("from").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    let to = step.get("to").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+
+                    if let Some(mark) = step.get("mark") {
+                        let mark_type = mark.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+                        console_log!("Removing mark '{}' from {} to {}", mark_type, from, to);
+
+                        // Try to find the text node for this range
+                        match self.find_text_at_position(loro_doc, from) {
+                            Ok((text, text_start, rel_from)) => {
+                                // Calculate relative end within this text node
+                                let rel_to = std::cmp::min(to, text_start + text.len_unicode()) - text_start;
+                                
+                                if rel_from < rel_to {
+                                    // For real implementation: text.format(rel_from, rel_to - rel_from, mark_type, null);
+                                    console_log!("Would remove format '{}' from {} to {}", mark_type, rel_from, rel_to);
+                                }
+                            },
+                            Err(e) => {
+                                console_log!("Error finding text at position {}: {}", from, e);
+                            }
+                        }
+                    }
+                }
+
+                // For other step types like replaceAround, addNodeMark, etc.
+                _ => {
+                    console_log!("Unsupported step type: {}", step_type);
+                }
+            }
+        }
+
+        // Commit the changes after all steps are applied
+        loro_doc.commit();
+        console_log!("Steps applied successfully");
+        Ok(())
     }
 
     pub fn init_default(&self) -> Result<(), String> {
@@ -356,16 +1079,16 @@ img {
 
         // Create default page
         let main = self.create_file("main", "page")?;
-        main.set_title("Hello World")
+        main.set_title("Hello World Title!")
             .map_err(|e| format!("Failed to set page title: {}", e))?;
-        main.set_body("Hello World")
+        main.init_body_with_content("Hello World Body!")
             .map_err(|e| format!("Failed to set page body: {}", e))?;
 
         // Create default post
         let post = self.create_file("post", "post")?;
-        post.set_title("Hello World")
+        post.set_title("Hello World Title!")
             .map_err(|e| format!("Failed to set post title: {}", e))?;
-        post.set_body("Hello World")
+        post.init_body_with_content("Hello World Body!")
             .map_err(|e| format!("Failed to set post body: {}", e))?;
 
         self.updated = chrono::Utc::now().timestamp_millis() as f64;
@@ -674,7 +1397,7 @@ impl Collection {
         // Initialize file based on collection type
         match self.name.as_str() {
             "page" => {
-                file.set_body("")
+                file.init_body()
                     .map_err(|e| format!("Failed to set body: {}", e))?;
                 file.set_title(name)
                     .map_err(|e| format!("Failed to set title: {}", e))?;
@@ -682,7 +1405,7 @@ impl Collection {
                     .map_err(|e| format!("Failed to set template: {}", e))?;
             }
             "post" => {
-                file.set_body("")
+                file.init_body()
                     .map_err(|e| format!("Failed to set body: {}", e))?;
                 file.set_title(name)
                     .map_err(|e| format!("Failed to set title: {}", e))?;
@@ -725,12 +1448,15 @@ impl Collection {
     }
 }
 
+type RichtextCallback = Closure<dyn Fn(JsValue, JsValue, JsValue)>;
+
 // File: Wrapper around a LoroTree handler and node ID that encapsulates file-specific functionality
 #[derive(Clone)]
 pub struct File {
     pub files: LoroTree, // Handler for the files tree in the LoroDoc
     pub id: TreeID,
     pub collection_type: String,
+    // pub richtext_callback: Option<RichtextCallback>,
 }
 
 impl File {
@@ -739,6 +1465,7 @@ impl File {
             files: files.clone(), // Clone the handler, not the underlying data
             id,
             collection_type: collection_type.to_string(),
+            // richtext_callback: None,
         }
     }
 
@@ -763,8 +1490,34 @@ impl File {
         self.collection_type.clone()
     }
 
-    pub fn set_body(&self, content: &str) -> Result<(), String> {
+    // pub fn register_richtext_callback(&mut self, callback: js_sys::Function) -> Result<(), String> {
+    //     // For page and post types
+    //     if self.collection_type == "page" || self.collection_type == "post" {
+    //         let data = match self.files.get_meta(self.id) {
+    //             Ok(meta) => meta,
+    //             Err(_) => return Err("Node metadata not found".to_string()),
+    //         };
+
+    //         if let Ok(cb) = callback.dyn_into::<js_sys::Function>() {
+    //             self.richtext_callback = Some(Closure::wrap(Box::new(
+    //                 move |body: &LoroMap, doc: &LoroDoc, id: ContainerID| {
+    //                     let _ = cb.call3(&JsValue::NULL, body.into(), doc.into(), &id.into());
+    //                 },
+    //             )
+    //                 as Box<dyn Fn(JsValue, JsValue, JsValue)>));
+    //         }
+    //     }
+
+    //     Ok(())
+    // }
+
+    pub fn init_body_with_content(&self, content: &str) -> Result<(), String> {
         // For page and post types
+        // TODO: handle other types
+        let doc = match self.files.doc() {
+            Some(doc) => doc,
+            None => return Err("Document not found".to_string()),
+        };
         if self.collection_type == "page" || self.collection_type == "post" {
             let data = match self.files.get_meta(self.id) {
                 Ok(meta) => meta,
@@ -772,20 +1525,56 @@ impl File {
             };
 
             if !data.get("body").is_some() {
-                let body_text = LoroText::new();
-                data.insert_container("body", body_text);
+                let body_root = LoroMap::new(); // LoroMap as root node for rich text
+                data.insert_container("body", body_root);
             }
 
-            if let Some(ValueOrContainer::Container(Container::Text(body))) = data.get("body") {
-                body.delete(0, body.len_utf8());
-                body.insert(0, content);
-                Ok(())
+            if let Some(ValueOrContainer::Container(Container::Map(body))) = data.get("body") {
+                if body.get("children").is_none() {
+                    body.insert_container("children", LoroList::new());
+                }
+                match body.get("children") {
+                    Some(ValueOrContainer::Container(Container::List(list))) => {
+                        match list.get(0) {
+                            Some(ValueOrContainer::Container(Container::Text(text))) => {
+                                // body is already initialized
+                                Ok(())
+                            }
+                            _ => {
+                                list.insert_container(0, LoroText::new());
+                                Ok(())
+                            }
+                        }
+                    }
+                    _ => {
+                        body.insert_container("children", LoroList::new());
+                        match body.get("children") {
+                            Some(ValueOrContainer::Container(Container::List(list))) => {
+                                list.insert_container(0, LoroText::new());
+                                if let Some(ValueOrContainer::Container(Container::Text(text))) =
+                                    list.get(0)
+                                {
+                                    text.delete(0, text.len_utf8());
+                                    text.insert(0, content);
+                                    Ok(())
+                                } else {
+                                    Err("Body not initialized".to_string())
+                                }
+                            }
+                            _ => Err("Body not initialized".to_string()),
+                        }
+                    }
+                }
             } else {
                 Err("Body not initialized".to_string())
             }
         } else {
             Err("Body is only available for page and post types".to_string())
         }
+    }
+
+    pub fn init_body(&self) -> Result<(), String> {
+        self.init_body_with_content("")
     }
 
     pub fn get_body(&self) -> Result<String, String> {
@@ -1091,4 +1880,20 @@ impl File {
 
         Ok(Value::Object(result))
     }
+}
+
+fn loro_map_to_js(map: &LoroMap) -> JsValue {
+    let obj = Object::new();
+    // Convert map contents to JS (simplified example)
+    JsValue::from(obj)
+}
+
+fn loro_doc_to_js(doc: &LoroDoc) -> JsValue {
+    let obj = Object::new();
+    // Convert document metadata
+    JsValue::from(obj)
+}
+
+fn container_id_to_js(id: &ContainerID) -> JsValue {
+    JsValue::from(id.to_string()) // Assuming ContainerID is stringifiable
 }
