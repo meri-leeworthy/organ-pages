@@ -609,6 +609,9 @@ impl Store {
     ) -> Result<(), JsValue> {
         console_log!("Applying steps to Loro document");
 
+        // Track whether we made changes that need to be committed
+        let mut has_changes = false;
+
         for step in steps {
             let step_type = match step.get("stepType").and_then(|v| v.as_str()) {
                 Some(t) => t,
@@ -626,7 +629,7 @@ impl Store {
 
                     console_log!("Replace operation from {} to {}", from, to);
 
-                    // Check if this is a deletion (from != to with no content)
+                    // Check if this is a deletion (from != to)
                     if from != to {
                         // Try to find the text node containing this range
                         match self.find_text_at_position(loro_doc, from) {
@@ -638,6 +641,13 @@ impl Store {
                                     let delete_len = rel_to - rel_from;
                                     console_log!("Deleting text: from={}, len={}", rel_from, delete_len);
                                     text.delete(rel_from, delete_len);
+                                    has_changes = true;
+                                }
+                                
+                                // If the range spans multiple nodes, we need to handle that case
+                                // This is a simplified approach - we only delete from the first node
+                                if to > text_start + text.len_unicode() {
+                                    console_log!("Warning: Range spans multiple nodes, only deleting from first node");
                                 }
                             },
                             Err(e) => {
@@ -661,6 +671,11 @@ impl Store {
                                                 if let Some(text_type) = text_obj.get("type").and_then(|v| v.as_str()) {
                                                     if text_type == "text" {
                                                         if let Some(content) = text_obj.get("text").and_then(|v| v.as_str()) {
+                                                            // Skip empty content
+                                                            if content.is_empty() {
+                                                                continue;
+                                                            }
+                                                            
                                                             console_log!("Inserting text: '{}' at position {}", content, rel_pos);
                                                             
                                                             // Check if there are marks to apply with the text
@@ -697,15 +712,21 @@ impl Store {
                                                                     // Apply the delta to insert formatted text
                                                                     console_log!("Inserting formatted text at position {}", rel_pos);
                                                                     text.apply_delta(delta);
+                                                                    has_changes = true;
                                                                 } else {
                                                                     // Simple insert without marks
                                                                     text.insert(rel_pos, content);
+                                                                    has_changes = true;
                                                                 }
                                                             } else {
                                                                 // Simple insert without marks
                                                                 text.insert(rel_pos, content);
+                                                                has_changes = true;
                                                             }
                                                         }
+                                                    } else {
+                                                        // Non-text node (paragraph, etc.)
+                                                        console_log!("Skipping non-text node insertion: {}", text_type);
                                                     }
                                                 }
                                             }
@@ -776,6 +797,12 @@ impl Store {
                                     // Apply the delta to the text
                                     console_log!("Applying format '{}' from {} to {}", mark_type, rel_from, rel_to);
                                     text.apply_delta(delta);
+                                    has_changes = true;
+                                    
+                                    // If the range spans multiple nodes, we need to handle that case
+                                    if to > text_start + text.len_unicode() {
+                                        console_log!("Warning: Formatting spans multiple nodes, only applying to first node");
+                                    }
                                 }
                             },
                             Err(e) => {
@@ -826,6 +853,12 @@ impl Store {
                                     // Apply the delta to the text
                                     console_log!("Removing format '{}' from {} to {}", mark_type, rel_from, rel_to);
                                     text.apply_delta(delta);
+                                    has_changes = true;
+                                    
+                                    // If the range spans multiple nodes, we need to handle that case
+                                    if to > text_start + text.len_unicode() {
+                                        console_log!("Warning: Removing formatting spans multiple nodes, only applying to first node");
+                                    }
                                 }
                             },
                             Err(e) => {
@@ -842,9 +875,15 @@ impl Store {
             }
         }
 
-        // Commit the changes after all steps are applied
-        loro_doc.commit();
-        console_log!("Steps applied successfully");
+        // Only commit if we made changes
+        if has_changes {
+            // Commit the changes after all steps are applied
+            loro_doc.commit();
+            console_log!("Steps applied successfully and changes committed");
+        } else {
+            console_log!("No changes to commit");
+        }
+        
         Ok(())
     }
 
