@@ -181,10 +181,10 @@ impl Store {
             }
         };
 
-        // Build text style config map (for logging/debugging)
+        // Build text style config map
         let mut text_style_config = HashMap::new();
 
-        // Process each mark and call configTextStyle
+        // Process each mark and build text style config
         if let Some(marks_obj) = marks.as_object() {
             for (mark_name, mark_def) in marks_obj {
                 // Default to "after" for inclusive marks (matching the JS implementation)
@@ -193,20 +193,34 @@ impl Store {
                     _ => "none", // Non-inclusive marks default to "none"
                 };
 
-                // Store the config for logging
-                text_style_config.insert(mark_name.clone(), expand);
-
-                // In a real implementation, we would call configTextStyle on the doc
-                // doc.config_text_style(mark_name, expand);
+                // Store the config
+                text_style_config.insert(mark_name.clone(), json!({ "expand": expand }));
             }
         }
 
         // Log the configuration for debugging
         console_log!("Text style config: {:?}", text_style_config);
 
-        // Note: In a real implementation, you'd need to extend the Loro WASM bindings
-        // to support configTextStyle. Here we're just preparing the configuration
-        // but not applying it since the binding isn't available.
+        // In Loro, we'd configure text style directly with something like:
+        // doc.config_text_style(text_style_config);
+        // However, since there's no direct binding for this in the WASM API,
+        // we'll simulate it by storing the config in a special metadata map
+        
+        // Store the text style config in a special metadata map for reference
+        if !text_style_config.is_empty() {
+            let meta_map = doc.get_map("__meta");
+            let styles_map = LoroMap::new();
+            meta_map.insert_container("textStyles", styles_map);
+            
+            if let Some(ValueOrContainer::Container(Container::Map(styles))) = meta_map.get("textStyles") {
+                for (mark_name, style_config) in text_style_config {
+                    // Convert the JSON value to a string representation
+                    if let Ok(config_str) = serde_json::to_string(&style_config) {
+                        styles.insert(mark_name, config_str);
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -649,27 +663,40 @@ impl Store {
                                                         if let Some(content) = text_obj.get("text").and_then(|v| v.as_str()) {
                                                             console_log!("Inserting text: '{}' at position {}", content, rel_pos);
                                                             
-                                                            // Insert the text with marks if present
+                                                            // Check if there are marks to apply with the text
                                                             if let Some(marks) = text_obj.get("marks").and_then(|v| v.as_array()) {
                                                                 if !marks.is_empty() {
-                                                                    // Insert first, then apply marks
-                                                                    text.insert(rel_pos, content);
+                                                                    // Create a delta for text insertion with formatting
+                                                                    let mut delta = Vec::new();
                                                                     
-                                                                    // Apply marks to the inserted text
+                                                                    // First retain the text before the insertion position
+                                                                    if rel_pos > 0 {
+                                                                        delta.push(json!({
+                                                                            "retain": rel_pos
+                                                                        }));
+                                                                    }
+                                                                    
+                                                                    // Collect all the marks' attributes
+                                                                    let mut all_attributes = serde_json::Map::new();
+                                                                    
                                                                     for mark in marks {
                                                                         if let Some(mark_obj) = mark.as_object() {
                                                                             if let Some(mark_type) = mark_obj.get("type").and_then(|v| v.as_str()) {
-                                                                                let attrs = mark_obj.get("attrs");
-                                                                                
-                                                                                // Format the text with this mark
-                                                                                // In a real implementation, we'd convert attrs to proper format
-                                                                                console_log!("Would apply mark '{}' to inserted text", mark_type);
-                                                                                
-                                                                                // This is where we'd apply the formatting
-                                                                                // text.format(rel_pos, content.len(), mark_type, attrs);
+                                                                                let attrs = mark_obj.get("attrs").cloned().unwrap_or(Value::Null);
+                                                                                all_attributes.insert(mark_type.to_string(), attrs);
                                                                             }
                                                                         }
                                                                     }
+                                                                    
+                                                                    // Add the insert operation with all marks
+                                                                    delta.push(json!({
+                                                                        "insert": content,
+                                                                        "attributes": all_attributes
+                                                                    }));
+                                                                    
+                                                                    // Apply the delta to insert formatted text
+                                                                    console_log!("Inserting formatted text at position {}", rel_pos);
+                                                                    text.apply_delta(delta);
                                                                 } else {
                                                                     // Simple insert without marks
                                                                     text.insert(rel_pos, content);
@@ -711,28 +738,44 @@ impl Store {
                                 let rel_to = std::cmp::min(to, text_start + text.len_unicode()) - text_start;
                                 
                                 if rel_from < rel_to {
-                                    // Create format object for mark
-                                    let mut format_attrs = HashMap::new();
+                                    let length = rel_to - rel_from;
                                     
-                                    // Convert mark_attrs to a HashMap if present
+                                    // Prepare delta with formatting to apply
+                                    let mut delta = Vec::new();
+                                    
+                                    // First retain the text before the formatting position
+                                    if rel_from > 0 {
+                                        delta.push(json!({
+                                            "retain": rel_from
+                                        }));
+                                    }
+                                    
+                                    // Create the attributes object for the mark
+                                    let mut attributes = serde_json::Map::new();
+                                    
+                                    // Add mark attributes if present
                                     if let Some(attrs) = mark_attrs {
                                         if let Some(attrs_obj) = attrs.as_object() {
                                             for (key, value) in attrs_obj {
-                                                // Convert value to appropriate Loro format
-                                                // This is a simplified implementation
-                                                if let Some(val_str) = value.as_str() {
-                                                    format_attrs.insert(key.clone(), val_str.to_string());
-                                                } else if let Some(val_bool) = value.as_bool() {
-                                                    format_attrs.insert(key.clone(), val_bool.to_string());
-                                                } else if let Some(val_num) = value.as_f64() {
-                                                    format_attrs.insert(key.clone(), val_num.to_string());
-                                                }
+                                                attributes.insert(key.clone(), value.clone());
                                             }
                                         }
+                                    } else {
+                                        // If no specific attributes, use an empty object
+                                        attributes.insert("value".to_string(), Value::Bool(true));
                                     }
                                     
-                                    // For real implementation: text.format(rel_from, rel_to - rel_from, mark_type, format_attrs);
-                                    console_log!("Would format text with '{}' from {} to {}", mark_type, rel_from, rel_to);
+                                    // Add the retain operation with the formatting
+                                    delta.push(json!({
+                                        "retain": length,
+                                        "attributes": {
+                                            [mark_type]: attributes
+                                        }
+                                    }));
+                                    
+                                    // Apply the delta to the text
+                                    console_log!("Applying format '{}' from {} to {}", mark_type, rel_from, rel_to);
+                                    text.apply_delta(delta);
                                 }
                             },
                             Err(e) => {
@@ -759,8 +802,30 @@ impl Store {
                                 let rel_to = std::cmp::min(to, text_start + text.len_unicode()) - text_start;
                                 
                                 if rel_from < rel_to {
-                                    // For real implementation: text.format(rel_from, rel_to - rel_from, mark_type, null);
-                                    console_log!("Would remove format '{}' from {} to {}", mark_type, rel_from, rel_to);
+                                    let length = rel_to - rel_from;
+                                    
+                                    // Prepare delta with formatting to remove
+                                    let mut delta = Vec::new();
+                                    
+                                    // First retain the text before the formatting position
+                                    if rel_from > 0 {
+                                        delta.push(json!({
+                                            "retain": rel_from
+                                        }));
+                                    }
+                                    
+                                    // Add the retain operation with the formatting removal
+                                    // In Loro/Quill, null attribute value means remove the attribute
+                                    delta.push(json!({
+                                        "retain": length,
+                                        "attributes": {
+                                            [mark_type]: null
+                                        }
+                                    }));
+                                    
+                                    // Apply the delta to the text
+                                    console_log!("Removing format '{}' from {} to {}", mark_type, rel_from, rel_to);
+                                    text.apply_delta(delta);
                                 }
                             },
                             Err(e) => {
