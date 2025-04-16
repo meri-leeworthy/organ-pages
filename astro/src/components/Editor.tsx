@@ -24,6 +24,47 @@ import { DropdownMenu, DropdownMenuTrigger } from "./ui/dropdown-menu"
 import type { File } from "@/wasm-worker/types"
 // import { ImageSelector } from "./ImageSelector"
 
+import { Extension } from "@tiptap/core"
+import { Plugin, PluginKey } from "@tiptap/pm/state"
+// import {
+//   LoroSyncPlugin,
+//   LoroUndoPlugin,
+//   LoroCursorPlugin,
+//   redo,
+//   undo,
+// } from "loro-prosemirror"
+// import { keymap } from "@tiptap/pm/keymap"
+
+// Import our new worker sync plugin
+import { WasmWorkerSyncPlugin } from "@/lib/loro-prosemirror/worker-sync"
+import { useStore } from "./StoreProvider"
+
+// Legacy plugin for reference - will be replaced by WasmWorkerSyncPlugin
+const LoroSyncPlugin = Extension.create({
+  name: "loroSync",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey("loroSync"),
+        // view: () => ({
+        //   update: view => {
+        //     console.log("View updated:", view)
+        //   },
+        // }),
+        state: {
+          init: () => {
+            console.log("State initialized")
+          },
+          apply: (tr, value) => {
+            console.log("State transaction:", tr)
+            return value
+          },
+        },
+      }),
+    ]
+  },
+})
+
 const extensions = [
   Document,
   Paragraph,
@@ -34,6 +75,8 @@ const extensions = [
   Dropcursor,
   Image,
   Link,
+  // We'll configure the WasmWorkerSyncPlugin per-file in the component
+  // to ensure each file gets its own document ID
 ]
 
 export function EditorComponent({
@@ -43,21 +86,27 @@ export function EditorComponent({
   file: File
   onChange: (html: string) => void
 }) {
+  const store = useStore()
   const editor = useEditor({
-    extensions: extensions,
+    extensions: [
+      ...extensions,
+      // Configure the WasmWorkerSyncPlugin with the file ID
+      // This ensures each file has its own document in the WASM store
+      WasmWorkerSyncPlugin.configure({
+        store: store,
+        clientId: "editor-" + Math.random().toString(36).substring(2, 9),
+      }),
+    ],
     content: file.body?.content || "",
     editorProps: {
       attributes: {
         class: "prose prose-sm sm:prose-base focus:outline-none",
       },
     },
-    shouldRerenderOnTransaction: true,
-    onUpdate({ editor }) {
-      onChange(editor.getHTML())
-    },
+    // onUpdate({ editor }) {
+    //   onChange(editor.getHTML())
+    // },
   })
-
-  // console.log("Current file", file)
 
   if (!editor) return null
 

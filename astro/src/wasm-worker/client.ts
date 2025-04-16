@@ -8,6 +8,7 @@ import type {
   FieldDefinition,
   FileUpdate,
   ProjectType,
+  DocumentData,
 } from "./types"
 
 /**
@@ -44,7 +45,7 @@ class WasmClient {
 
     // Create a new worker
     if (typeof window !== "undefined") {
-      this.worker = new Worker(new URL("./worker.js", import.meta.url), {
+      this.worker = new Worker(new URL("./worker.ts", import.meta.url), {
         type: "module",
       })
 
@@ -120,9 +121,25 @@ class WasmClient {
       type?: string
       siteId?: string
       themeId?: string
+      documentId?: string
+      steps?: any[]
+      source?: string
+      version?: number
     }>
   ) {
-    const { id, success, data, error, type, siteId, themeId } = event.data
+    const {
+      id,
+      success,
+      data,
+      error,
+      type,
+      siteId,
+      themeId,
+      documentId,
+      steps,
+      source,
+      version,
+    } = event.data
 
     // Handle ready message
     if (type === "ready") {
@@ -137,6 +154,17 @@ class WasmClient {
     // Handle state changed events
     if (type === "state_saved" || type === "state_loaded") {
       this.notifyStateChangeListeners(type, { siteId, themeId })
+      return
+    }
+
+    // Handle document change events
+    if (type === "document_changed" && documentId) {
+      const eventType = `document_changed:${documentId}`
+      this.notifyStateChangeListeners(eventType, {
+        steps,
+        source: source || "unknown",
+        version: version || 0,
+      })
       return
     }
 
@@ -182,14 +210,42 @@ class WasmClient {
   }
 
   /**
+   * Subscribe to document change events
+   * @param documentId The ID of the document to listen for changes
+   * @param callback Function to call when document changes occur
+   * @returns Function to unsubscribe
+   */
+  public onDocumentChange(
+    documentId: string,
+    callback: (data: { steps: any[]; source: string; version: number }) => void
+  ): () => void {
+    const eventType = `document_changed:${documentId}`
+
+    if (!this.stateChangeListeners.has(eventType)) {
+      this.stateChangeListeners.set(eventType, new Set())
+    }
+
+    this.stateChangeListeners.get(eventType)!.add(callback)
+
+    // Return unsubscribe function
+    return () => {
+      const listeners = this.stateChangeListeners.get(eventType)
+      if (listeners) {
+        listeners.delete(callback)
+        if (listeners.size === 0) {
+          // If no more listeners, we could notify the worker to stop sending updates
+          // This is an optimization we can add later
+        }
+      }
+    }
+  }
+
+  /**
    * Notify all listeners of a state change event
    * @param eventType The event type
    * @param data The event data
    */
-  private notifyStateChangeListeners(
-    eventType: string,
-    data: { siteId?: string; themeId?: string }
-  ): void {
+  private notifyStateChangeListeners(eventType: string, data: any): void {
     const listeners = this.stateChangeListeners.get(eventType)
     if (listeners) {
       listeners.forEach(callback => {
@@ -405,6 +461,37 @@ class WasmClient {
     })
   }
 
+  public async initializeDocument(
+    documentId: string,
+    schema: string
+  ): Promise<Response<void>> {
+    return this.sendMessage<void>({
+      InitializeDocument: { document_id: documentId, schema },
+    })
+  }
+
+  public async getDocument(
+    documentId: string
+  ): Promise<Response<DocumentData>> {
+    return this.sendMessage<DocumentData>({
+      GetDocument: { document_id: documentId },
+    })
+  }
+
+  public async applySteps(
+    documentId: string,
+    steps: any[],
+    version: number
+  ): Promise<Response<void>> {
+    return this.sendMessage<void>({
+      ApplySteps: {
+        document_id: documentId,
+        steps,
+        version,
+      },
+    })
+  }
+
   // Storage operations
   /**
    * Save the current state to persistent storage
@@ -474,9 +561,15 @@ class WasmClient {
     updated: number
   ): Promise<Response<Site | Theme>> {
     // Ensure data is an array of numbers
-    const dataArray = data instanceof Uint8Array ? Array.from(data) : data;
+    const dataArray = data instanceof Uint8Array ? Array.from(data) : data
     return this.sendMessage<Site | Theme>({
-      ImportProject: { data: dataArray, id, project_type: projectType, created, updated },
+      ImportProject: {
+        data: dataArray,
+        id,
+        project_type: projectType,
+        created,
+        updated,
+      },
     })
   }
 

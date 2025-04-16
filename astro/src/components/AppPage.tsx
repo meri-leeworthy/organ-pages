@@ -51,8 +51,7 @@ export function AppPage() {
           </ResizablePanel> */}
         </ResizablePanelGroup>
       ) : (
-        // <Preview />
-        <div>No file selected</div>
+        <div>No file selected (put Preview back here)</div>
       )}
     </>
   )

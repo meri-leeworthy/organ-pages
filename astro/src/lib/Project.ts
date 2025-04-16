@@ -1,3 +1,5 @@
+// deprecated, work towards removing this
+
 import { LoroDoc, LoroMap } from "loro-crdt"
 import { randomId } from "./utils"
 import { siteTypes, themeTypes, type OrganUserModel } from "./types"

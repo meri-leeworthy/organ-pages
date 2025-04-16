@@ -3,7 +3,6 @@
 export function save_data(db_name: string, store_name: string, key: string, value: Uint8Array): Promise<void>;
 export function load_data(db_name: string, store_name: string, key: string): Promise<string>;
 export function main(): void;
-export function render(current_file_id: number, context: any): string;
 export function __wbgtest_cov_dump(): Uint8Array | undefined;
 /**
  * Handler for `console.log` invocations.
@@ -30,23 +29,20 @@ export function __wbgtest_console_warn(args: Array<any>): void;
  * Handler for `console.error` invocations. See above.
  */
 export function __wbgtest_console_error(args: Array<any>): void;
-/**
- * The Actor struct manages the application state and handles messages
- */
-export class Actor {
-  free(): void;
-  constructor();
-  /**
-   * Process a message and return a response
-   */
-  process_message(message_json: string): string;
-}
 export class EventEmitter {
   free(): void;
   constructor();
   on(event_name: string, callback: Function): Function;
   off(event_name: string, callback: Function): void;
   emit(event_name: string, args: any): void;
+}
+export class Store {
+  free(): void;
+  constructor();
+  /**
+   * Process a message and return a response
+   */
+  process_message(message_json: string): string;
 }
 /**
  * Runtime test harness support instantiated in JS.
@@ -87,18 +83,17 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
-  readonly __wbg_actor_free: (a: number, b: number) => void;
-  readonly actor_new: () => number;
-  readonly actor_process_message: (a: number, b: number, c: number) => [number, number, number, number];
-  readonly save_data: (a: number, b: number, c: number, d: number, e: number, f: number, g: any) => any;
-  readonly load_data: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-  readonly main: () => void;
-  readonly render: (a: number, b: any) => [number, number, number, number];
+  readonly __wbg_store_free: (a: number, b: number) => void;
+  readonly store_new: () => number;
+  readonly store_process_message: (a: number, b: number, c: number) => [number, number, number, number];
   readonly __wbg_eventemitter_free: (a: number, b: number) => void;
   readonly eventemitter_new: () => number;
   readonly eventemitter_on: (a: number, b: number, c: number, d: any) => any;
   readonly eventemitter_off: (a: number, b: number, c: number, d: any) => void;
   readonly eventemitter_emit: (a: number, b: number, c: number, d: any) => void;
+  readonly save_data: (a: number, b: number, c: number, d: number, e: number, f: number, g: any) => any;
+  readonly load_data: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly main: () => void;
   readonly __wbg_wasmbindgentestcontext_free: (a: number, b: number) => void;
   readonly wasmbindgentestcontext_new: () => number;
   readonly wasmbindgentestcontext_args: (a: number, b: number, c: number) => void;
@@ -117,9 +112,9 @@ export interface InitOutput {
   readonly __wbindgen_free: (a: number, b: number, c: number) => void;
   readonly __wbindgen_export_6: WebAssembly.Table;
   readonly __externref_table_dealloc: (a: number) => void;
-  readonly closure1028_externref_shim: (a: number, b: number, c: any) => void;
-  readonly closure1048_externref_shim: (a: number, b: number, c: any, d: number, e: any) => void;
-  readonly closure1052_externref_shim: (a: number, b: number, c: any, d: any) => void;
+  readonly closure1123_externref_shim: (a: number, b: number, c: any) => void;
+  readonly closure1141_externref_shim: (a: number, b: number, c: any, d: number, e: any) => void;
+  readonly closure1145_externref_shim: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_start: () => void;
 }
 

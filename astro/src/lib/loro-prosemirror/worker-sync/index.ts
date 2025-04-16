@@ -1,0 +1,1 @@
+export { WasmWorkerSyncPlugin, wasmWorkerSyncPluginKey } from './plugin';

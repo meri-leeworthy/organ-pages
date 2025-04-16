@@ -56,7 +56,7 @@ export function FileListItem({ file }: { file: File }) {
   const handleSelectFile = () => {
     if (!state.activeProjectType) return
 
-    console.log("Setting active file: ", file)
+    console.log("[FileListItem] Setting active file: ", file)
 
     // Set this file as the active file
     setActiveFile({

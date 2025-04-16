@@ -145,6 +145,28 @@ export type FileUpdate =
   | { SetMimeType: string }
   | { SetAlt: string }
 
+// Document operations for ProseMirror integration
+interface InitializeDocumentMessage {
+  InitializeDocument: {
+    document_id: string
+    schema: string // JSON stringified ProseMirror schema
+  }
+}
+
+interface GetDocumentMessage {
+  GetDocument: {
+    document_id: string
+  }
+}
+
+interface ApplyStepsMessage {
+  ApplySteps: {
+    document_id: string
+    steps: any[] // Serialized ProseMirror steps
+    version: number
+  }
+}
+
 // Union of all message types
 export type Message =
   | CreateSiteMessage
@@ -164,6 +186,9 @@ export type Message =
   | ImportProjectMessage
   | RenderFileMessage
   | InitDefaultMessage
+  | InitializeDocumentMessage
+  | GetDocumentMessage
+  | ApplyStepsMessage
 
 // Response from the Actor
 export type Response<T> =
@@ -192,6 +217,7 @@ export interface File {
   id: string
   name: string
   collection: string
+  projectType: ProjectType
   // Additional properties based on collection type
   [key: string]: any
 }
@@ -217,6 +243,12 @@ export interface StoreState {
   siteActiveFile?: ActiveFile
   siteActivePage?: ActiveFile
   themeActiveFile?: ActiveFile
+}
+
+// Document types for ProseMirror integration
+export interface DocumentData {
+  version: number
+  content: any // JSON representation of document
 }
 
 export interface StoreContextValue {
@@ -255,10 +287,20 @@ export interface StoreContextValue {
     collectionName: string
   ) => Promise<File[]>
   renderFile: (fileId: string, context: any) => Promise<string>
+  initializeDocument: (
+    documentId: string,
+    schema: string
+  ) => Promise<Response<void>>
+  getDocument: (documentId: string) => Promise<Response<DocumentData>>
+  applySteps: (
+    documentId: string,
+    steps: any[],
+    version: number
+  ) => Promise<Response<void>>
   saveState: (
-    siteId: string,
-    themeId: string,
-    activeProjectType: ProjectType
+    siteId?: string,
+    themeId?: string,
+    activeProjectType?: ProjectType
   ) => Promise<Response<void>>
   loadState: (siteId?: string, themeId?: string) => Promise<boolean>
 

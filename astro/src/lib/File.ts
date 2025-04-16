@@ -1,3 +1,5 @@
+// deprecated, work towards removing this
+
 import { LoroList, LoroText, LoroTreeNode, type Container } from "loro-crdt"
 
 export class File {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useStore } from "./StoreProvider.jsx"
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert.jsx"
-import { useRender } from "@/hooks/useRender.js"
+// import { useRender } from "@/hooks/useRender.js"
 
 export const Preview = () => {
   const iframeRef = useRef<HTMLIFrameElement | null>(null)

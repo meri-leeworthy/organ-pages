@@ -29,7 +29,7 @@ export const SelectedFileDisplay = ({ onClose }: { onClose: () => void }) => {
   // const client = useClient()
   // const { render } = useRender()
   const { state, saveState } = useStore()
-  const [publishLoading, setPublishLoading] = useState(false)
+  // const [publishLoading, setPublishLoading] = useState(false)
   const { file, updateActiveFile } = useActiveFile()
   const { collection, isLoading, error } = useCollection(
     state.activeProjectType,
@@ -37,8 +37,8 @@ export const SelectedFileDisplay = ({ onClose }: { onClose: () => void }) => {
   )
   const debouncedFile = useDebounce(file, 1000)
 
-  console.log("collection", collection)
-  console.log("file", file)
+  // console.log("collection", collection)
+  // console.log("file", file)
 
   // const handlePublishFile = async () => {
   //   if (!store || loading || error) return
@@ -140,12 +140,12 @@ export const SelectedFileDisplay = ({ onClose }: { onClose: () => void }) => {
       )
     }
 
-    console.log("file", file)
+    console.log("[SelectedFileDisplay] File data changed", file)
   }
 
   useEffect(() => {
     if (debouncedFile) {
-      console.log("saving state", state.activeProjectType)
+      console.log("[SelectedFileDisplay] Saving state", state.activeProjectType)
       if (!state.site?.id || !state.theme?.id) return
       saveState(state.site?.id, state.theme?.id, state.activeProjectType)
     }
@@ -181,7 +181,7 @@ export const SelectedFileDisplay = ({ onClose }: { onClose: () => void }) => {
     (name: string, field: FieldDefinition) => {
       if (!file) return null
       const rawValue = file?.[field.name]
-      console.log("rawValue", rawValue)
+      // console.log("rawValue", rawValue)
       let value: string | number | string[] | undefined
 
       if (
@@ -303,7 +303,7 @@ export const SelectedFileDisplay = ({ onClose }: { onClose: () => void }) => {
             />
           )
         default:
-          console.log("field not found", field)
+          console.error("[SelectedFileDisplay] Field not found", field)
           return null
       }
     },

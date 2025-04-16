@@ -1,3 +1,5 @@
+// deprecated, work towards removing this
+
 import { LoroMap, LoroTree, LoroTreeNode } from "loro-crdt"
 import { validateModel, type OrganUserModel } from "./types"
 import { Asset, File, Page, Partial, Post, Template, Text } from "./File"

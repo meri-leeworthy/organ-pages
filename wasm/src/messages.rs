@@ -2,6 +2,8 @@ use js_sys::Array;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+use crate::types::FieldDefinition;
+
 /// Messages that can be sent to the Actor system.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Message {
@@ -17,11 +19,11 @@ pub enum Message {
     GetTheme,
 
     // Collection operations
-    AddCollection {
-        project_type: String,
-        name: String,
-        fields: Vec<FieldDefinition>,
-    },
+    // AddCollection {
+    //     project_type: String,
+    //     name: String,
+    //     fields: Vec<FieldDefinition>,
+    // },
     GetCollection {
         project_type: String,
         name: String,
@@ -72,31 +74,33 @@ pub enum Message {
     },
 
     // Rendering operations
-    RenderFile {
-        file_id: String,
-        context: serde_json::Value,
-    },
+    // RenderFile {
+    //     file_id: String,
+    //     context: serde_json::Value,
+    // },
 
     // Initialization
     InitDefault,
-}
 
-/// Field definition for collections
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FieldDefinition {
-    pub name: String,
-    pub field_type: String,
-    pub required: bool,
+    // Document operations for ProseMirror integration
+    GetDocument {
+        document_id: String,
+    },
+    // ApplySteps {
+    //     document_id: String,
+    //     steps: Vec<serde_json::Value>, // Serialized ProseMirror steps
+    //     version: u32,
+    // },
 }
 
 /// File update operations
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum FileUpdate {
+    SetField { name: String, value: String },
     SetName(String),
     SetContent(String),
     SetBody(String),
     SetTitle(String),
-    SetField { name: String, value: String },
     SetUrl(String),
     SetMimeType(String),
     SetAlt(String),

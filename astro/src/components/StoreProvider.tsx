@@ -17,31 +17,33 @@ import type {
   FileUpdate,
   ProjectType,
   ActiveFile,
+  Response,
 } from "../wasm-worker/types"
 import { Alert } from "@/components/ui/alert"
 
-// LocalStorage keys
-const LOCAL_STORAGE_KEYS = {
-  ACTIVE_PROJECT_TYPE: "organ_active_project_type",
-  SITE_ACTIVE_FILE: "organ_site_active_file",
-  SITE_ACTIVE_PAGE: "organ_site_active_page",
-  THEME_ACTIVE_FILE: "organ_theme_active_file",
-}
+// LocalStorage keys -
+// TODO: delete, keeping for reference
+// const LOCAL_STORAGE_KEYS = {
+//   ACTIVE_PROJECT_TYPE: "organ_active_project_type",
+//   SITE_ACTIVE_FILE: "organ_site_active_file",
+//   SITE_ACTIVE_PAGE: "organ_site_active_page",
+//   THEME_ACTIVE_FILE: "organ_theme_active_file",
+// }
 
 // Helper to load from localStorage
-const loadFromLocalStorage = <T,>(key: string): T | undefined => {
-  if (typeof window === "undefined") return undefined
+// const loadFromLocalStorage = <T,>(key: string): T | undefined => {
+//   if (typeof window === "undefined") return undefined
 
-  const value = localStorage.getItem(key)
-  if (!value) return undefined
+//   const value = localStorage.getItem(key)
+//   if (!value) return undefined
 
-  try {
-    return JSON.parse(value) as T
-  } catch (e) {
-    console.error(`Error loading ${key} from localStorage:`, e)
-    return undefined
-  }
-}
+//   try {
+//     return JSON.parse(value) as T
+//   } catch (e) {
+//     console.error(`Error loading ${key} from localStorage:`, e)
+//     return undefined
+//   }
+// }
 
 // Initial state with localStorage values
 const initialState: StoreState = {
@@ -52,19 +54,11 @@ const initialState: StoreState = {
   collections: [],
   files: {},
 
-  // Load UI state from localStorage
-  activeProjectType:
-    loadFromLocalStorage<ProjectType>(LOCAL_STORAGE_KEYS.ACTIVE_PROJECT_TYPE) ||
-    "site",
-  siteActiveFile: loadFromLocalStorage<ActiveFile>(
-    LOCAL_STORAGE_KEYS.SITE_ACTIVE_FILE
-  ),
-  siteActivePage: loadFromLocalStorage<ActiveFile>(
-    LOCAL_STORAGE_KEYS.SITE_ACTIVE_PAGE
-  ),
-  themeActiveFile: loadFromLocalStorage<ActiveFile>(
-    LOCAL_STORAGE_KEYS.THEME_ACTIVE_FILE
-  ),
+  // TODO: get from indexeddb if that's not happening already
+  activeProjectType: "site",
+  siteActiveFile: undefined,
+  siteActivePage: undefined,
+  themeActiveFile: undefined,
 }
 
 console.log("initialState", initialState)
@@ -112,15 +106,15 @@ type Action =
   | { type: "SET_THEME_ACTIVE_FILE"; payload: ActiveFile | undefined }
 
 // Helper to save to localStorage
-const saveToLocalStorage = <T,>(key: string, value: T | undefined): void => {
-  if (typeof window === "undefined") return
+// const saveToLocalStorage = <T,>(key: string, value: T | undefined): void => {
+//   if (typeof window === "undefined") return
 
-  if (value === undefined) {
-    localStorage.removeItem(key)
-  } else {
-    localStorage.setItem(key, JSON.stringify(value))
-  }
-}
+//   if (value === undefined) {
+//     localStorage.removeItem(key)
+//   } else {
+//     localStorage.setItem(key, JSON.stringify(value))
+//   }
+// }
 
 // Reducer
 function storeReducer(state: StoreState, action: Action): StoreState {
@@ -176,7 +170,7 @@ function storeReducer(state: StoreState, action: Action): StoreState {
       }
 
     case "UPDATE_FILE":
-      console.log("update file", action.payload)
+      console.log("[StoreProvider] Update file", action.payload)
       return {
         ...state,
         files: {
@@ -568,7 +562,7 @@ export function WasmStoreProvider({ children }: { children: ReactNode }) {
     try {
       dispatch({ type: "SET_LOADING", payload: true })
 
-      console.log("update", update)
+      console.log("[StoreProvider] Update file", update)
 
       await wasmClient.updateFile(projectType, collectionName, fileId, update)
       if ("Error" in update) throw update
@@ -665,11 +659,71 @@ export function WasmStoreProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Initialize a document
+  const initializeDocument = async (
+    documentId: string,
+    schema: string
+  ): Promise<Response<void>> => {
+    try {
+      const response = await wasmClient.initializeDocument(documentId, schema)
+      if ("Error" in response) throw response
+      return response
+    } catch (error) {
+      console.error("Initialize document error:", error)
+      dispatch({
+        type: "SET_ERROR",
+        payload:
+          error instanceof Error
+            ? error.message
+            : "Failed to initialize document",
+      })
+      return { Error: "Failed to initialize document" }
+    }
+  }
+
+  // Get a document
+  const getDocument = async (documentId: string) => {
+    try {
+      const response = await wasmClient.getDocument(documentId)
+      if ("Error" in response) throw response
+      return response
+    } catch (error) {
+      console.error("Get document error:", error)
+      dispatch({
+        type: "SET_ERROR",
+        payload:
+          error instanceof Error ? error.message : "Failed to get document",
+      })
+      return { Error: "Failed to get document" }
+    }
+  }
+
+  // Apply steps to a document
+  const applySteps = async (
+    documentId: string,
+    steps: any[],
+    version: number
+  ) => {
+    try {
+      const response = await wasmClient.applySteps(documentId, steps, version)
+      if ("Error" in response) throw response
+      return response
+    } catch (error) {
+      console.error("Apply steps error:", error)
+      dispatch({
+        type: "SET_ERROR",
+        payload:
+          error instanceof Error ? error.message : "Failed to apply steps",
+      })
+      return { Error: "Failed to apply steps" }
+    }
+  }
+
   // Save state
   const saveState = async (
-    siteId: string,
-    themeId: string,
-    activeProjectType: ProjectType
+    siteId?: string,
+    themeId?: string,
+    activeProjectType?: ProjectType
   ) => {
     try {
       dispatch({ type: "SET_LOADING", payload: true })
@@ -833,6 +887,9 @@ export function WasmStoreProvider({ children }: { children: ReactNode }) {
     renderFile,
     saveState,
     loadState,
+    initializeDocument,
+    getDocument,
+    applySteps,
     // UI state setters
     setActiveProjectType,
     setSiteActiveFile,

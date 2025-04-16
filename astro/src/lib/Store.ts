@@ -1,3 +1,5 @@
+// deprecated, work towards removing this
+
 import { EventEmitter } from "./EventEmitter"
 import { Project } from "./Project"
 
