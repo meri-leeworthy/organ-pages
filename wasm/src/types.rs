@@ -1,4 +1,4 @@
-use crate::model::file::{Asset, File, Page, Partial, Post, Template, Text};
+use crate::model::file::{Asset, Page, Partial, Post, Template, Text};
 use enum_dispatch::enum_dispatch;
 use loro::{LoroMap, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
@@ -6,7 +6,6 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt::{self, Display, Formatter};
-use std::str::FromStr;
 
 // Type definitions to match the TypeScript interfaces
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,28 +41,15 @@ pub enum FileType {
     // UserModel,
 }
 
-impl FileType {
-    pub fn get_file(&self) -> &dyn File {
-        match self {
-            FileType::Asset(asset) => asset,
-            FileType::Template(template) => template,
-            FileType::Page(page) => page,
-            FileType::Text(text) => text,
-            FileType::Partial(partial) => partial,
-            FileType::Post(post) => post,
-        }
-    }
-}
-
 impl Display for FileType {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            FileType::Asset(asset) => write!(f, "asset"),
-            FileType::Template(template) => write!(f, "template"),
-            FileType::Page(page) => write!(f, "page"),
-            FileType::Text(text) => write!(f, "text"),
-            FileType::Partial(partial) => write!(f, "partial"),
-            FileType::Post(post) => write!(f, "post"),
+            FileType::Asset(_asset) => write!(f, "asset"),
+            FileType::Template(_template) => write!(f, "template"),
+            FileType::Page(_page) => write!(f, "page"),
+            FileType::Text(_text) => write!(f, "text"),
+            FileType::Partial(_partial) => write!(f, "partial"),
+            FileType::Post(_post) => write!(f, "post"),
             // FileType::UserModel => write!(f, "userModel"),
         }
     }

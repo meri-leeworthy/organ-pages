@@ -950,7 +950,7 @@ pub mod document {
         }
 
         /// Apply ProseMirror steps to a Loro document
-        fn apply_steps(&mut self, steps: &[Value], version: i64) -> Result<i64, String> {
+        async fn apply_steps(&mut self, steps: &[Value], version: i64) -> Result<i64, String> {
             // console_log!(
             //     "Applying steps to document. Current version: {:?}, incoming version: {}",
             //     self.version(),
@@ -981,6 +981,7 @@ pub mod document {
             // Get current version and increment
             let new_version = self.version().unwrap_or(0) + 1;
             self.set_version(new_version)
+                .await
                 .map_err(|e| format!("Failed to set version: {:?}", e))?;
 
             // console_log!(
@@ -1018,7 +1019,18 @@ mod tests {
         fn builder() -> FileBuilder<Self> {
             FileBuilder::new("test")
         }
-        fn init(&mut self, _meta: Option<&LoroMap>) -> Result<(), String> {
+        async fn build_from(builder: FileBuilder<Self>) -> Result<Self, String> {
+            // Ensure we have a store
+            let store = builder.store.ok_or("No file store provided")?;
+
+            // console_log!("Building page from builder: {:?}", builder);
+            let mut file = TestRichTextFile { store };
+            file.init(None)
+                .await
+                .map_err(|e| format!("Failed to initialize page: {}", e))?;
+            Ok(file)
+        }
+        async fn init(&mut self, _meta: Option<&LoroMap>) -> Result<(), String> {
             Ok(())
         }
 
@@ -1050,7 +1062,18 @@ mod tests {
         fn builder() -> FileBuilder<Self> {
             FileBuilder::new("test")
         }
-        fn init(&mut self, _meta: Option<&LoroMap>) -> Result<(), String> {
+        async fn build_from(builder: FileBuilder<Self>) -> Result<Self, String> {
+            // Ensure we have a store
+            let store = builder.store.ok_or("No file store provided")?;
+
+            // console_log!("Building page from builder: {:?}", builder);
+            let mut file = TestPlainTextFile { store };
+            file.init(None)
+                .await
+                .map_err(|e| format!("Failed to initialize page: {}", e))?;
+            Ok(file)
+        }
+        async fn init(&mut self, _meta: Option<&LoroMap>) -> Result<(), String> {
             Ok(())
         }
 

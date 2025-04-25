@@ -8,12 +8,18 @@ export const openDatabase = () => {
   }
 
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("organ-db", 1) // Ensure this version is higher if needed for idb schema changes
+    const request = indexedDB.open("organ_db", 2) // Ensure this version is higher if needed for idb schema changes
 
     request.onupgradeneeded = event => {
       const db = request.result
       if (!db.objectStoreNames.contains("doc")) {
-        db.createObjectStore("doc") // Create the 'doc' object store
+        db.createObjectStore("doc") // Create the 'doc' object store // what is this?
+      }
+      if (!db.objectStoreNames.contains("projects")) {
+        db.createObjectStore("projects")
+      }
+      if (!db.objectStoreNames.contains("files")) {
+        db.createObjectStore("files")
       }
       if (!db.objectStoreNames.contains("assets")) {
         db.createObjectStore("assets") // Create the 'assets' object store

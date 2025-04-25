@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::convert::TryFrom;
 
 use crate::model::file::schema::ProseMirrorSchema;
 use crate::model::file::{Chainable, File, FileBuilder, FileStore, HasRichText, HasTitle, HasUrl};
-use loro::{LoroDoc, LoroError, LoroMap, LoroValue, ValueOrContainer};
+use loro::{LoroMap, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -41,9 +40,12 @@ impl File for Page {
         FileBuilder::new("page")
     }
 
-    fn init(&mut self, meta: Option<&LoroMap>) -> Result<(), String> {
-        self.set_type("page")?;
-        self.initialize_richtext_document()?;
+    async fn init(&mut self, meta: Option<&LoroMap>) -> Result<(), String> {
+        self.set_type("page").await?;
+        match self.initialize_richtext_document() {
+            Ok(_) => (),
+            Err(e) => console_log!("Richtext document was not initialized: {}", e),
+        }
 
         let id = self
             .load_string_field_with_meta(meta, "id")
@@ -61,21 +63,22 @@ impl File for Page {
             .load_string_field_with_meta(meta, "url")
             .unwrap_or(self.get_url().unwrap_or_default());
 
-        self.set_id(&id)?;
-        self.set_name(&name)?;
-        self.set_version(version)?;
-        self.set_title(&title)?;
-        self.set_url(&url)?;
+        self.set_id(&id).await?;
+        self.set_name(&name).await?;
+        self.set_version(version).await?;
+        self.set_title(&title).await?;
+        self.set_url(&url).await?;
         Ok(())
     }
 
-    fn build_from(builder: FileBuilder<Self>) -> Result<Self, String> {
+    async fn build_from(builder: FileBuilder<Self>) -> Result<Self, String> {
         // Ensure we have a store
         let store = builder.store.ok_or("No file store provided")?;
 
         // console_log!("Building page from builder: {:?}", builder);
         let mut page = Page { store };
         page.init(None)
+            .await
             .map_err(|e| format!("Failed to initialize page: {}", e))?;
         Ok(page)
     }
@@ -150,9 +153,10 @@ impl PartialEq for Page {
 #[allow(unused)]
 #[cfg(test)]
 mod tests {
-    use std::convert::TryFrom;
+    use std::{collections::HashMap, convert::TryFrom};
 
     use super::*;
+    use loro::LoroDoc;
     use serde_json::json;
     use wasm_bindgen_test::*;
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
@@ -178,12 +182,15 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_page_builder() {
+    async fn test_page_builder() {
         let pm_schema = test_schema();
         let page = Page::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_pm_schema(pm_schema.clone())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build page");
 
         assert_eq!(page.version().unwrap(), 0);
@@ -192,43 +199,58 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_page_title() {
+    async fn test_page_title() {
         let mut page = Page::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_pm_schema(test_schema())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build page");
 
         // Test setting and getting title
-        page.set_title("Test Page").expect("Failed to set title");
+        page.set_title("Test Page")
+            .await
+            .expect("Failed to set title");
         let title = page.get_title().expect("Failed to get title");
         assert_eq!(title, "Test Page");
     }
 
     #[wasm_bindgen_test]
-    fn test_page_url() {
+    async fn test_page_url() {
         let mut page = Page::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_pm_schema(test_schema())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build page");
 
         // Test setting and getting URL
-        page.set_url("/test-page").expect("Failed to set URL");
+        page.set_url("/test-page").await.expect("Failed to set URL");
         let url = page.get_url().expect("Failed to get URL");
         assert_eq!(url, "/test-page");
     }
 
     #[wasm_bindgen_test]
-    fn test_page_to_json() {
+    async fn test_page_to_json() {
         let mut page = Page::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_pm_schema(test_schema())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build page");
 
-        page.set_title("Test Page").expect("Failed to set title");
-        page.set_name("test-page").expect("Failed to set name");
+        page.set_title("Test Page")
+            .await
+            .expect("Failed to set title");
+        page.set_name("test-page")
+            .await
+            .expect("Failed to set name");
 
         let json = page.to_json().expect("Failed to convert to JSON");
         let obj = json.as_object().expect("JSON should be an object");
@@ -239,12 +261,16 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_page_init() {
+    async fn test_page_init() {
         let mut page = Page::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_id("test-id".to_string())
+            .expect("Failed to set id")
             .with_pm_schema(test_schema())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build page");
 
         // Create a meta map with test data
@@ -254,7 +280,9 @@ mod tests {
         meta.insert("name", "test-name");
         meta.insert("version", "1");
 
-        page.init(Some(&meta)).expect("Failed to initialize page");
+        page.init(Some(&meta))
+            .await
+            .expect("Failed to initialize page");
 
         assert_eq!(page.get_title().unwrap(), "Test Title");
         assert_eq!(page.get_url().unwrap(), "/test-url");
@@ -263,36 +291,60 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_page_equality() {
+    async fn test_page_equality() {
         let schema = test_schema();
         let page1 = Page::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_id("test-id".to_string())
+            .expect("Failed to set id")
             .with_pm_schema(schema.clone())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build page");
 
         let page2 = Page::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_id("test-id".to_string())
+            .expect("Failed to set id")
             .with_pm_schema(schema.clone())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build page");
 
         let page3 = Page::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_id("different-id".to_string())
+            .expect("Failed to set id")
             .with_pm_schema(schema.clone())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build page");
 
         // Pages are equal if they have the same id, regardless of other fields
-        assert_eq!(page1, page2);
-        assert_ne!(page1, page3);
+        assert_eq!(
+            page1,
+            page2,
+            "Pages should be equal, ids: {}, {}",
+            page1.id().unwrap(),
+            page2.id().unwrap()
+        );
+        assert_ne!(
+            page1,
+            page3,
+            "Pages should not be equal, ids: {}, {}",
+            page1.id().unwrap(),
+            page3.id().unwrap()
+        );
     }
 
     #[wasm_bindgen_test]
-    fn test_page_schema_validation() {
+    async fn test_page_schema_validation() {
         // Test with invalid schema
         let invalid_schema = ProseMirrorSchema {
             marks: HashMap::new(),
@@ -301,9 +353,12 @@ mod tests {
         };
 
         let result = Page::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_pm_schema(invalid_schema)
             .expect("Failed to add pm schema")
-            .build();
+            .build()
+            .await;
 
         // Should still build since schema validation is not strict
         assert!(result.is_ok());
@@ -311,19 +366,25 @@ mod tests {
         // Test with empty schema
         let empty_schema = ProseMirrorSchema::default();
         let result = Page::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_pm_schema(empty_schema)
             .expect("Failed to add pm schema")
-            .build();
+            .build()
+            .await;
         assert!(result.is_ok());
     }
 
     #[wasm_bindgen_test]
-    fn test_page_rich_text_operations() {
+    async fn test_page_rich_text_operations() {
         let schema = test_schema();
         let mut page = Page::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_pm_schema(schema.clone())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build page");
 
         // Test applying steps
@@ -342,11 +403,14 @@ mod tests {
             }
         })];
 
-        let new_version = page.apply_steps(&steps, 0).expect("Failed to apply steps");
+        let new_version = page
+            .apply_steps(&steps, 0)
+            .await
+            .expect("Failed to apply steps");
         assert_eq!(new_version, 1);
 
         // Test version handling
-        let result = page.apply_steps(&steps, 0);
+        let result = page.apply_steps(&steps, 0).await;
         assert!(
             result.is_ok(),
             "Should accept steps even with version mismatch"
@@ -354,12 +418,15 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_page_schema_json() {
+    async fn test_page_schema_json() {
         let schema = test_schema();
         let page = Page::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_pm_schema(schema.clone())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build page");
 
         let schema_json = page.schema_json();

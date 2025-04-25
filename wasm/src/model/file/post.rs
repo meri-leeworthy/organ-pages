@@ -1,9 +1,5 @@
-use std::collections::HashMap;
-use std::convert::TryFrom;
-
-use crate::model::file::schema::ProseMirrorSchema;
 use crate::model::file::{Chainable, File, FileBuilder, FileStore, HasRichText, HasTitle, HasUrl};
-use loro::{LoroDoc, LoroError, LoroMap, LoroValue, ValueOrContainer};
+use loro::LoroMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -39,9 +35,12 @@ impl File for Post {
         FileBuilder::new("post")
     }
 
-    fn init(&mut self, meta: Option<&LoroMap>) -> Result<(), String> {
-        self.set_type("post")?;
-        self.initialize_richtext_document()?;
+    async fn init(&mut self, meta: Option<&LoroMap>) -> Result<(), String> {
+        self.set_type("post").await?;
+        match self.initialize_richtext_document() {
+            Ok(_) => (),
+            Err(e) => console_log!("Richtext document was not initialized: {}", e),
+        }
 
         let id = self
             .load_string_field_with_meta(meta, "id")
@@ -59,20 +58,21 @@ impl File for Post {
             .load_string_field_with_meta(meta, "url")
             .unwrap_or(self.get_url().unwrap_or_default());
 
-        self.set_id(&id)?;
-        self.set_name(&name)?;
-        self.set_version(version)?;
-        self.set_title(&title)?;
-        self.set_url(&url)?;
+        self.set_id(&id).await?;
+        self.set_name(&name).await?;
+        self.set_version(version).await?;
+        self.set_title(&title).await?;
+        self.set_url(&url).await?;
         Ok(())
     }
 
-    fn build_from(builder: FileBuilder<Self>) -> Result<Self, String> {
+    async fn build_from(builder: FileBuilder<Self>) -> Result<Self, String> {
         // Ensure we have a store
         let store = builder.store.ok_or("No file store provided")?;
 
         let mut post = Post { store };
         post.init(None)
+            .await
             .map_err(|e| format!("Failed to initialize post: {}", e))?;
         Ok(post)
     }
@@ -136,12 +136,12 @@ mod tests {
     use std::convert::TryFrom;
 
     use super::*;
-    use loro::LoroValue;
+    use loro::{LoroDoc, LoroValue};
     use serde_json::json;
     use wasm_bindgen_test::*;
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-    fn test_schema() -> ProseMirrorSchema {
+    fn test_schema() -> crate::ProseMirrorSchema {
         let schema_json = json!({
             "marks": {
                 "bold": { "inclusive": true },
@@ -159,16 +159,19 @@ mod tests {
         })
         .to_string();
 
-        ProseMirrorSchema::try_from(schema_json).expect("Failed to create test schema")
+        crate::ProseMirrorSchema::try_from(schema_json).expect("Failed to create test schema")
     }
 
     #[wasm_bindgen_test]
-    fn test_post_builder() {
+    async fn test_post_builder() {
         let pm_schema = test_schema();
         let post = Post::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_pm_schema(pm_schema.clone())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build post");
 
         assert_eq!(post.version().unwrap(), 0);
@@ -177,40 +180,52 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_post_title() {
+    async fn test_post_title() {
         let mut post = Post::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_pm_schema(test_schema())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build post");
 
         // Test setting and getting title
-        post.set_title("Test Post").expect("Failed to set title");
+        post.set_title("Test Post")
+            .await
+            .expect("Failed to set title");
         let title = post.get_title().expect("Failed to get title");
         assert_eq!(title, "Test Post");
     }
 
     #[wasm_bindgen_test]
-    fn test_post_url() {
+    async fn test_post_url() {
         let mut post = Post::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_pm_schema(test_schema())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build post");
 
         // Test setting and getting URL
-        post.set_url("/test-post").expect("Failed to set URL");
+        post.set_url("/test-post").await.expect("Failed to set URL");
         let url = post.get_url().expect("Failed to get URL");
         assert_eq!(url, "/test-post");
     }
 
     #[wasm_bindgen_test]
-    fn test_post_init() {
+    async fn test_post_init() {
         let mut post = Post::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_id("test-id".to_string())
+            .expect("Failed to set id")
             .with_pm_schema(test_schema())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build post");
 
         // Create a meta map with test data
@@ -220,7 +235,9 @@ mod tests {
         meta.insert("name", "test-name");
         meta.insert("version", "1");
 
-        post.init(Some(&meta)).expect("Failed to initialize post");
+        post.init(Some(&meta))
+            .await
+            .expect("Failed to initialize post");
 
         assert_eq!(post.get_title().unwrap(), "Test Title");
         assert_eq!(post.get_url().unwrap(), "/test-url");
@@ -229,27 +246,39 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_post_equality() {
+    async fn test_post_equality() {
         let schema = test_schema();
         let post1 = Post::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_id("test-id".to_string())
+            .expect("Failed to set id")
             .with_pm_schema(schema.clone())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build post");
 
         let post2 = Post::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_id("test-id".to_string())
+            .expect("Failed to set id")
             .with_pm_schema(schema.clone())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build post");
 
         let post3 = Post::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_id("different-id".to_string())
+            .expect("Failed to set id")
             .with_pm_schema(schema.clone())
             .expect("Failed to add pm schema")
             .build()
+            .await
             .expect("Failed to build post");
 
         // Posts are equal if they have the same id, regardless of other fields

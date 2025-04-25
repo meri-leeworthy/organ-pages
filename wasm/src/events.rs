@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
 
 // Simple callback system to mimic the EventEmitter pattern in TypeScript
 #[derive(Clone)]

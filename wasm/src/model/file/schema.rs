@@ -1,9 +1,7 @@
-use core::fmt;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::fmt::Display;
 
 /// Represents a ProseMirror schema mark definition
 #[derive(Debug, Clone, Serialize, Deserialize)]

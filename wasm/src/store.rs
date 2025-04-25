@@ -5,8 +5,8 @@ use crate::model::project::Project;
 use crate::model::{Asset, Page, Partial, Post, Template, Text};
 use crate::types::{FileType, ProjectType};
 use crate::{js_conversions::*, FileStore, ProseMirrorSchema};
+use loro::{LoroDoc, LoroMap};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::prelude::*;
@@ -24,33 +24,33 @@ macro_rules! console_log {
 ($($t:tt)*) => (log(&format!("[Store (WASM)] {}", format!($($t)*))))
 }
 
-/// Store: The main entry point for our data model
+pub const IDB_DB_NAME: &str = "organ_db";
+pub const IDB_PROJECTS_STORE: &str = "projects";
+pub const IDB_FILES_STORE: &str = "files";
+
 #[wasm_bindgen]
 pub struct Store {
-    active_site: Arc<Mutex<Option<Project>>>,
-    active_theme: Arc<Mutex<Option<Project>>>,
-    active_file: Arc<Mutex<Option<FileType>>>,
+    inner: Arc<StoreInner>,
 }
 
 #[wasm_bindgen]
 impl Store {
     #[wasm_bindgen(constructor)]
-    pub fn new() -> Self {
-        console_log!("Creating new Store instance");
-        console_error_panic_hook::set_once();
+    pub fn new() -> Store {
+        console_log!("Creating StoreWrapper");
 
-        let actor = Store {
-            active_theme: Arc::new(Mutex::new(None)),
-            active_site: Arc::new(Mutex::new(None)),
-            active_file: Arc::new(Mutex::new(None)),
-        };
-        console_log!("Actor instance created successfully");
-        actor
+        Store {
+            inner: Arc::new(StoreInner {
+                active_site: Arc::new(Mutex::new(None)),
+                active_theme: Arc::new(Mutex::new(None)),
+                active_file: Arc::new(Mutex::new(None)),
+            }),
+        }
     }
 
     /// Process a message and return a response
     #[wasm_bindgen]
-    pub fn process_message(&self, message_json: &str) -> Result<String, JsValue> {
+    pub fn process_message(&self, message_json: &str) -> Result<js_sys::Promise, JsValue> {
         console_log!("Received message: {}", message_json);
 
         let message: Message = match serde_json::from_str(message_json) {
@@ -67,32 +67,63 @@ impl Store {
             }
         };
 
-        let response = self.handle_message(message);
-        console_log!("Generated response: {:?}", response);
+        let store = self.inner.clone(); // ✅ Arc<Store>
+        let fut = async move {
+            let response = store.handle_message(message).await;
+            console_log!("Generated response: {:?}", response);
 
-        match serde_json::to_string(&response) {
-            Ok(json) => {
-                console_log!("Successfully serialized response");
-                Ok(json)
+            match serde_json::to_string(&response) {
+                Ok(json) => {
+                    console_log!("Successfully serialized response");
+                    Ok(JsValue::from_str(&json))
+                }
+                Err(e) => {
+                    console_log!("Failed to serialize response: {}", e);
+                    Err(JsValue::from_str(&format!(
+                        "Failed to serialize response: {}",
+                        e
+                    )))
+                }
             }
-            Err(e) => {
-                console_log!("Failed to serialize response: {}", e);
-                Err(JsValue::from_str(&format!(
-                    "Failed to serialize response: {}",
-                    e
-                )))
-            }
-        }
+        };
+
+        Ok(wasm_bindgen_futures::future_to_promise(fut))
+    }
+}
+
+/// Store: The main entry point for our data model
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct StoreInner {
+    active_site: Arc<Mutex<Option<Project>>>,
+    active_theme: Arc<Mutex<Option<Project>>>,
+    active_file: Arc<Mutex<Option<FileType>>>,
+}
+
+#[wasm_bindgen]
+impl StoreInner {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        console_log!("Creating new Store instance");
+        console_error_panic_hook::set_once();
+
+        let actor = StoreInner {
+            active_theme: Arc::new(Mutex::new(None)),
+            active_site: Arc::new(Mutex::new(None)),
+            active_file: Arc::new(Mutex::new(None)),
+        };
+        console_log!("Actor instance created successfully");
+        actor
     }
 
     /// Handle a message and return a response
-    fn handle_message(&self, message: Message) -> Response {
+    async fn handle_message(&self, message: Message) -> Response {
         console_log!("Handling message: {:?}", message);
 
         let response = match message {
             Message::InitDefault => {
                 console_log!("Processing InitDefault message");
-                self.init_default()
+                self.init_default().await
             }
             Message::CreateSite { name, theme_id } => {
                 console_log!(
@@ -100,12 +131,12 @@ impl Store {
                     name,
                     theme_id
                 );
-                self.create_site(name, theme_id)
+                self.create_site(name, theme_id).await
             }
             Message::GetSite => self.get_site(),
             Message::CreateTheme { name } => {
                 console_log!("Processing CreateTheme message - name: {}", name);
-                self.create_theme(name)
+                self.create_theme(name).await
             }
             Message::GetTheme => self.get_theme(),
             // Message::AddCollection {
@@ -121,24 +152,27 @@ impl Store {
                 project_type,
                 collection_name,
                 name,
-            } => self.create_file(project_type, collection_name, name),
+            } => self.create_file(project_type, collection_name, name).await,
             Message::UpdateFile {
                 project_type,
                 collection_name,
                 file_id,
                 updates,
-            } => self.update_file(project_type, collection_name, file_id, updates),
+            } => {
+                self.update_file(project_type, collection_name, file_id, updates)
+                    .await
+            }
             Message::GetFile {
                 project_type,
                 collection_name,
                 file_id,
-            } => self.get_file(project_type, collection_name, file_id),
+            } => self.get_file(project_type, collection_name, file_id).await,
             Message::ListFiles {
                 project_type,
                 collection_name,
-            } => self.list_files(project_type, collection_name),
-            Message::SaveState { project_type } => self.save_state(project_type),
-            Message::LoadState { site_id, theme_id } => self.load_state(site_id, theme_id),
+            } => self.list_files(project_type, collection_name).await,
+            Message::SaveState { project_type } => self.save_state(project_type).await,
+            Message::LoadState { site_id, theme_id } => self.load_state(site_id, theme_id).await,
             Message::ExportProject { project_type } => self.export_project(project_type),
             Message::ImportProject {
                 data,
@@ -179,10 +213,10 @@ impl Store {
     }
 
     /// Initialize default projects
-    fn init_default(&self) -> Response {
+    async fn init_default(&self) -> Response {
         console_log!("Initializing default projects");
         // Create default theme
-        let default_theme = match Project::new(ProjectType::Theme, None) {
+        let default_theme = match Project::new(ProjectType::Theme, None).await {
             Ok(theme) => theme,
             Err(error) => {
                 return Response::Error(format!("Failed to create default theme: {}", error))
@@ -192,7 +226,7 @@ impl Store {
         let theme_id = default_theme.id();
 
         // Create default site
-        let default_site = match Project::new(ProjectType::Site, Some(theme_id)) {
+        let default_site = match Project::new(ProjectType::Site, Some(theme_id)).await {
             Ok(site) => site,
             Err(error) => {
                 return Response::Error(format!("Failed to create default site: {}", error))
@@ -252,14 +286,14 @@ impl Store {
     }
 
     /// ACTOR Create a new site
-    fn create_site(&self, name: String, theme_id: String) -> Response {
+    async fn create_site(&self, name: String, theme_id: String) -> Response {
         console_log!(
             "Creating site with name: {} and theme_id: {}",
             name,
             theme_id
         );
 
-        match Project::new(ProjectType::Site, Some(theme_id.clone())) {
+        match Project::new(ProjectType::Site, Some(theme_id.clone())).await {
             Ok(mut project) => {
                 project.set_name(&name);
 
@@ -280,10 +314,10 @@ impl Store {
     }
 
     /// ACTOR Create a new theme
-    fn create_theme(&self, name: String) -> Response {
+    async fn create_theme(&self, name: String) -> Response {
         console_log!("Creating theme with name: {}", name);
 
-        match Project::new(ProjectType::Theme, None) {
+        match Project::new(ProjectType::Theme, None).await {
             Ok(mut project) => {
                 project.set_name(&name);
 
@@ -467,63 +501,67 @@ impl Store {
         console_log!("Listing collections for {:?}", project_type);
 
         // Get the appropriate project based on project_type
-        let project = match project_type {
-            ProjectType::Site => {
-                if let Some(site) = self.active_site.lock().unwrap().clone() {
-                    site.clone()
-                } else {
-                    return Response::error("Failed to acquire site lock");
-                }
-            }
-            ProjectType::Theme => {
-                if let Some(theme) = self.active_theme.lock().unwrap().clone() {
-                    theme.clone()
-                } else {
-                    return Response::error("Failed to acquire theme lock");
-                }
-            }
+        let mut guard = match project_type {
+            ProjectType::Site => self
+                .active_site
+                .lock()
+                .expect("Failed to acquire site lock"),
+            ProjectType::Theme => self
+                .active_theme
+                .lock()
+                .expect("Failed to acquire theme lock"),
         };
 
-        let collections = match project.get_collections() {
-            Ok(collections) => collections,
-            Err(e) => return Response::error(&format!("Failed to get collections: {}", e)),
-        };
+        if let Some(ref mut project) = *guard {
+            let collections = match project.get_collections() {
+                Ok(collections) => collections,
+                Err(e) => return Response::error(&format!("Failed to get collections: {}", e)),
+            };
 
-        let collections: Vec<Result<Value, String>> = collections
-            .iter()
-            .map(|(name, map)| match name.as_str() {
-                "page" => {
-                    let collection = Collection::<Page>::builder(name.clone())?.build_detached()?;
-                    js_conversions::collection_to_json(&collection)
-                }
-                "post" => {
-                    let collection = Collection::<Post>::builder(name.clone())?.build_detached()?;
-                    js_conversions::collection_to_json(&collection)
-                }
-                "asset" => {
-                    let collection =
-                        Collection::<Asset>::builder(name.clone())?.build_detached()?;
-                    js_conversions::collection_to_json(&collection)
-                }
-                "template" => {
-                    let collection =
-                        Collection::<Template>::builder(name.clone())?.build_detached()?;
-                    js_conversions::collection_to_json(&collection)
-                }
-                "partial" => {
-                    let collection =
-                        Collection::<Partial>::builder(name.clone())?.build_detached()?;
-                    js_conversions::collection_to_json(&collection)
-                }
-                "text" => {
-                    let collection = Collection::<Text>::builder(name.clone())?.build_detached()?;
-                    js_conversions::collection_to_json(&collection)
-                }
-                _ => Err(format!("Collection not found: {}", name)),
-            })
-            .collect();
+            console_log!("Collections: {:#?}", collections);
 
-        return Response::success(json!(collections));
+            let collections: Vec<Value> = collections
+                .iter()
+                .map(|(name, map)| match name.as_str() {
+                    "page" => {
+                        let collection =
+                            Collection::<Page>::builder(name.clone())?.build_detached()?;
+                        js_conversions::collection_to_json(&collection)
+                    }
+                    "post" => {
+                        let collection =
+                            Collection::<Post>::builder(name.clone())?.build_detached()?;
+                        js_conversions::collection_to_json(&collection)
+                    }
+                    "asset" => {
+                        let collection =
+                            Collection::<Asset>::builder(name.clone())?.build_detached()?;
+                        js_conversions::collection_to_json(&collection)
+                    }
+                    "template" => {
+                        let collection =
+                            Collection::<Template>::builder(name.clone())?.build_detached()?;
+                        js_conversions::collection_to_json(&collection)
+                    }
+                    "partial" => {
+                        let collection =
+                            Collection::<Partial>::builder(name.clone())?.build_detached()?;
+                        js_conversions::collection_to_json(&collection)
+                    }
+                    "text" => {
+                        let collection =
+                            Collection::<Text>::builder(name.clone())?.build_detached()?;
+                        js_conversions::collection_to_json(&collection)
+                    }
+                    _ => Err(format!("Collection not found: {}", name)),
+                })
+                .map(|c| c.unwrap())
+                .collect();
+
+            return Response::success(json!(collections));
+        } else {
+            return Response::error("No active project");
+        }
 
         // match js_conversions::collections_to_json(&collections) {
         //     Ok(json_value) => Response::success(json_value),
@@ -531,12 +569,13 @@ impl Store {
         // }
     }
 
-    fn create_file_generic<T: File + Default + Debug>(
+    async fn create_file_generic<T: File + Default + Debug>(
         &self,
         project_type: ProjectType,
         collection_name: &str,
         name: &str,
         pm_schema: Option<ProseMirrorSchema>,
+        store: crate::FileStore,
     ) -> Response {
         let mut guard = match project_type {
             ProjectType::Site => self
@@ -551,7 +590,7 @@ impl Store {
 
         if let Some(ref mut project) = *guard {
             // Perform all operations on project while holding single lock
-            let mut file_builder = match project.create_file::<T>(&name, &collection_name) {
+            let mut file_builder = match project.create_file::<T>(&name, &collection_name, store) {
                 Ok(file) => file,
                 Err(e) => return Response::error(&format!("Failed to create file: {}", e)),
             };
@@ -563,7 +602,7 @@ impl Store {
                 };
             }
 
-            let file = match project.attach_file(file_builder) {
+            let file = match project.attach_file(file_builder).await {
                 Ok(f) => f,
                 Err(_) => return Response::error("Failed to attach file"),
             };
@@ -578,7 +617,12 @@ impl Store {
     }
 
     /// ACTOR Create a file in a collection
-    fn create_file(&self, project_type: String, collection_name: String, name: String) -> Response {
+    async fn create_file(
+        &self,
+        project_type: String,
+        collection_name: String,
+        name: String,
+    ) -> Response {
         let project_type = match js_conversions::string_to_project_type(&project_type) {
             Ok(pt) => pt,
             Err(e) => return Response::error(&format!("Failed to convert project type: {}", e)),
@@ -592,28 +636,66 @@ impl Store {
         );
 
         match collection_name.as_str() {
-            "page" => self.create_file_generic::<Page>(
-                project_type,
-                &collection_name,
-                &name,
-                Some(ProseMirrorSchema::default()),
-            ),
-            "post" => self.create_file_generic::<Post>(
-                project_type,
-                &collection_name,
-                &name,
-                Some(ProseMirrorSchema::default()),
-            ),
+            "page" => {
+                self.create_file_generic::<Page>(
+                    project_type,
+                    &collection_name,
+                    &name,
+                    Some(ProseMirrorSchema::default()),
+                    crate::FileStore::Full(LoroDoc::new()),
+                )
+                .await
+            }
+            "post" => {
+                self.create_file_generic::<Post>(
+                    project_type,
+                    &collection_name,
+                    &name,
+                    Some(ProseMirrorSchema::default()),
+                    crate::FileStore::Full(LoroDoc::new()),
+                )
+                .await
+            }
             "asset" => {
-                self.create_file_generic::<Asset>(project_type, &collection_name, &name, None)
+                self.create_file_generic::<Asset>(
+                    project_type,
+                    &collection_name,
+                    &name,
+                    None,
+                    crate::FileStore::Cache(LoroMap::new()),
+                )
+                .await
             }
             "template" => {
-                self.create_file_generic::<Template>(project_type, &collection_name, &name, None)
+                self.create_file_generic::<Template>(
+                    project_type,
+                    &collection_name,
+                    &name,
+                    None,
+                    crate::FileStore::Full(LoroDoc::new()),
+                )
+                .await
             }
             "partial" => {
-                self.create_file_generic::<Partial>(project_type, &collection_name, &name, None)
+                self.create_file_generic::<Partial>(
+                    project_type,
+                    &collection_name,
+                    &name,
+                    None,
+                    crate::FileStore::Full(LoroDoc::new()),
+                )
+                .await
             }
-            "text" => self.create_file_generic::<Text>(project_type, &collection_name, &name, None),
+            "text" => {
+                self.create_file_generic::<Text>(
+                    project_type,
+                    &collection_name,
+                    &name,
+                    None,
+                    crate::FileStore::Full(LoroDoc::new()),
+                )
+                .await
+            }
             _ => Response::error(&format!("Collection not found: {}", collection_name)),
         }
     }
@@ -625,7 +707,7 @@ impl Store {
     /// it might make sense to have a method for updating the active file only
     /// rather than being able to update any arbitrary file
     ///
-    fn update_file(
+    async fn update_file(
         &self,
         project_type: String,
         collection_name: String,
@@ -657,6 +739,7 @@ impl Store {
             None => return Response::error("No active project"),
         };
 
+        // only supports page and post for now?
         match collection_name.as_str() {
             "page" => {
                 let collection = project.get_collection::<Page>("page");
@@ -665,29 +748,29 @@ impl Store {
                     Err(e) => return Response::error(&format!("Failed to get collection: {}", e)),
                 };
 
-                let mut file = match collection.get_file(&file_id, &collection_name) {
+                let mut file = match collection.get_file(&file_id, &collection_name).await {
                     Ok(file) => file,
                     Err(e) => return Response::error(&format!("Failed to get file: {}", e)),
                 };
 
                 match update {
                     FileUpdate::SetName(name) => {
-                        if let Err(e) = file.set_name(&name) {
+                        if let Err(e) = file.set_name(&name).await {
                             return Response::error(&format!("Failed to set name: {}", e));
                         }
                     }
                     FileUpdate::SetTitle(title) => {
-                        if let Err(e) = file.set_title(&title) {
+                        if let Err(e) = file.set_title(&title).await {
                             return Response::error(&format!("Failed to set title: {}", e));
                         }
                     }
                     FileUpdate::SetUrl(url) => {
-                        if let Err(e) = file.set_url(&url) {
+                        if let Err(e) = file.set_url(&url).await {
                             return Response::error(&format!("Failed to set URL: {}", e));
                         }
                     }
                     FileUpdate::SetField { name, value } => {
-                        if let Err(e) = file.set_field(&name, &value) {
+                        if let Err(e) = file.set_field(&name, &value).await {
                             return Response::error(&format!("Failed to set field: {}", e));
                         }
                     }
@@ -701,29 +784,29 @@ impl Store {
                     Err(e) => return Response::error(&format!("Failed to get collection: {}", e)),
                 };
 
-                let mut file = match collection.get_file(&file_id, &collection_name) {
+                let mut file = match collection.get_file(&file_id, &collection_name).await {
                     Ok(file) => file,
                     Err(e) => return Response::error(&format!("Failed to get file: {}", e)),
                 };
 
                 match update {
                     FileUpdate::SetName(name) => {
-                        if let Err(e) = file.set_name(&name) {
+                        if let Err(e) = file.set_name(&name).await {
                             return Response::error(&format!("Failed to set name: {}", e));
                         }
                     }
                     FileUpdate::SetTitle(title) => {
-                        if let Err(e) = file.set_title(&title) {
+                        if let Err(e) = file.set_title(&title).await {
                             return Response::error(&format!("Failed to set title: {}", e));
                         }
                     }
                     FileUpdate::SetUrl(url) => {
-                        if let Err(e) = file.set_url(&url) {
+                        if let Err(e) = file.set_url(&url).await {
                             return Response::error(&format!("Failed to set URL: {}", e));
                         }
                     }
                     FileUpdate::SetField { name, value } => {
-                        if let Err(e) = file.set_field(&name, &value) {
+                        if let Err(e) = file.set_field(&name, &value).await {
                             return Response::error(&format!("Failed to set field: {}", e));
                         }
                     }
@@ -740,7 +823,7 @@ impl Store {
     }
 
     // Add this helper function before the get_file method
-    fn get_file_generic<T: File + Default>(
+    async fn get_file_generic<T: File + Default>(
         &self,
         project: &Project,
         collection_name: &str,
@@ -751,7 +834,7 @@ impl Store {
             Err(e) => return Response::error(&format!("Failed to get collection: {}", e)),
         };
 
-        let file = match collection.get_file(file_id, collection_name) {
+        let file = match collection.get_file(file_id, collection_name).await {
             Ok(file) => file,
             Err(e) => return Response::error(&format!("Failed to get file: {}", e)),
         };
@@ -766,7 +849,12 @@ impl Store {
     ///
     /// File metadata is cached in a files tree. First narrow by project,
     /// then by collection, then by file id.
-    fn get_file(&self, project_type: String, collection_name: String, file_id: String) -> Response {
+    async fn get_file(
+        &self,
+        project_type: String,
+        collection_name: String,
+        file_id: String,
+    ) -> Response {
         let project_type = match js_conversions::string_to_project_type(&project_type) {
             Ok(pt) => pt,
             Err(e) => return Response::error(&format!("Failed to convert project type: {}", e)),
@@ -798,18 +886,36 @@ impl Store {
         };
 
         match collection_name.as_str() {
-            "page" => self.get_file_generic::<Page>(&project, &collection_name, &file_id),
-            "post" => self.get_file_generic::<Post>(&project, &collection_name, &file_id),
-            "asset" => self.get_file_generic::<Asset>(&project, &collection_name, &file_id),
-            "template" => self.get_file_generic::<Template>(&project, &collection_name, &file_id),
-            "partial" => self.get_file_generic::<Partial>(&project, &collection_name, &file_id),
-            "text" => self.get_file_generic::<Text>(&project, &collection_name, &file_id),
+            "page" => {
+                self.get_file_generic::<Page>(&project, &collection_name, &file_id)
+                    .await
+            }
+            "post" => {
+                self.get_file_generic::<Post>(&project, &collection_name, &file_id)
+                    .await
+            }
+            "asset" => {
+                self.get_file_generic::<Asset>(&project, &collection_name, &file_id)
+                    .await
+            }
+            "template" => {
+                self.get_file_generic::<Template>(&project, &collection_name, &file_id)
+                    .await
+            }
+            "partial" => {
+                self.get_file_generic::<Partial>(&project, &collection_name, &file_id)
+                    .await
+            }
+            "text" => {
+                self.get_file_generic::<Text>(&project, &collection_name, &file_id)
+                    .await
+            }
             _ => Response::error(&format!("Collection not found: {}", collection_name)),
         }
     }
 
     // Add this helper function before the list_files method
-    fn list_files_generic<T: File + Default>(
+    async fn list_files_generic<T: File + Default>(
         &self,
         project: &Project,
         collection_name: &str,
@@ -819,7 +925,7 @@ impl Store {
             Err(e) => return Response::error(&format!("Failed to get collection: {}", e)),
         };
 
-        let files = match collection.get_files(collection_name) {
+        let files = match collection.get_files(collection_name).await {
             Ok(files) => files,
             Err(e) => return Response::error(&format!("Failed to get files: {}", e)),
         };
@@ -831,7 +937,7 @@ impl Store {
     }
 
     /// ACTOR List files in a collection
-    fn list_files(&self, project_type: String, collection_name: String) -> Response {
+    async fn list_files(&self, project_type: String, collection_name: String) -> Response {
         let project_type = match js_conversions::string_to_project_type(&project_type) {
             Ok(pt) => pt,
             Err(e) => return Response::error(&format!("Failed to convert project type: {}", e)),
@@ -855,18 +961,36 @@ impl Store {
         };
 
         match collection_name.as_str() {
-            "page" => self.list_files_generic::<Page>(project, &collection_name),
-            "post" => self.list_files_generic::<Post>(project, &collection_name),
-            "asset" => self.list_files_generic::<Asset>(project, &collection_name),
-            "template" => self.list_files_generic::<Template>(project, &collection_name),
-            "partial" => self.list_files_generic::<Partial>(project, &collection_name),
-            "text" => self.list_files_generic::<Text>(project, &collection_name),
+            "page" => {
+                self.list_files_generic::<Page>(project, &collection_name)
+                    .await
+            }
+            "post" => {
+                self.list_files_generic::<Post>(project, &collection_name)
+                    .await
+            }
+            "asset" => {
+                self.list_files_generic::<Asset>(project, &collection_name)
+                    .await
+            }
+            "template" => {
+                self.list_files_generic::<Template>(project, &collection_name)
+                    .await
+            }
+            "partial" => {
+                self.list_files_generic::<Partial>(project, &collection_name)
+                    .await
+            }
+            "text" => {
+                self.list_files_generic::<Text>(project, &collection_name)
+                    .await
+            }
             _ => Response::error(&format!("Collection not found: {}", collection_name)),
         }
     }
 
     /// ACTOR Save state to IndexedDB
-    fn save_state(&self, project_type: String) -> Response {
+    async fn save_state(&self, project_type: String) -> Response {
         console_log!("Saving state to IndexedDB - project_type: {}", project_type);
 
         // Use wasm_bindgen_futures::spawn_local to execute this future
@@ -913,67 +1037,167 @@ impl Store {
 
         // Save the site and theme data to IndexedDB
         // These would be separate futures using save_data
-        let save_project_result = super::save_data(
-            "organ_db".to_string(),
-            "projects".to_string(),
-            project_id.clone(),
-            project_export,
-        );
+        console_log!("Saving project data to IndexedDB: {}", project_id);
 
-        // For now, we'll just return success - in a real async implementation
-        // we would await all futures and handle errors appropriately
+        let length = &project_export.length();
+        match crate::save_data(IDB_PROJECTS_STORE, &project_id, project_export).await {
+            Ok(_) => {
+                console_log!("Site data saved, size: {} bytes", length);
+            }
+            Err(e) => {
+                console_log!("Failed to save site data: {:#?}", e);
+                return Response::Error(format!("Failed to save site: {:#?}", e));
+            }
+        };
+
         Response::success(json!({
             "status": "saved",
             "project_type": project_type,
         }))
     }
 
+    /// Helper function to convert JS Uint8Array to Rust Vec<u8>
+    fn to_vec_u8(array: &js_sys::Uint8Array) -> Result<Vec<u8>, String> {
+        let mut result = vec![0; array.length() as usize];
+        array.copy_to(&mut result);
+        Ok(result)
+    }
+
     /// ACTOR Load state from IndexedDB
-    fn load_state(&self, site_id: Option<String>, theme_id: Option<String>) -> Response {
+    async fn load_state(&self, site_id: Option<String>, theme_id: Option<String>) -> Response {
         console_log!(
-            "Loading state from IndexedDB - siteId: {:?}, themeId: {:?}",
+            "Loading state from IndexedDB - site_id: {:?}, theme_id: {:?}",
             site_id,
             theme_id
         );
 
-        // If specific IDs are provided, use those
-        // Otherwise, try to load the active projects metadata
+        // Check if we have projects in memory first
+        let has_site_in_memory = self.active_site.lock().unwrap().is_some();
+        let has_theme_in_memory = self.active_theme.lock().unwrap().is_some();
 
+        // If specific IDs are provided, use those
         if let (Some(site_id), Some(theme_id)) = (site_id.as_ref(), theme_id.as_ref()) {
             console_log!(
-                "Loading specific projects - siteId: {}, themeId: {}",
+                "Loading specific projects - site_id: {}, theme_id: {}",
                 site_id,
                 theme_id
             );
 
-            // Load site data
-            // In a fully implemented version, we would use async code:
-            // let site_data = load_data("organ_db", "projects", site_id).await?;
-            // For now, we'll simulate success if we have site/theme in memory
+            // For now, if we have the projects in memory, return success
+            if has_site_in_memory && has_theme_in_memory {
+                let site = self.active_site.lock().unwrap().clone().unwrap();
+                let theme = self.active_theme.lock().unwrap().clone().unwrap();
 
-            // Check if we already have these projects in memory
-            let has_site = self.active_site.lock().unwrap().is_some();
-            let has_theme = self.active_theme.lock().unwrap().is_some();
-
-            // If we have both, return success
-            if has_site && has_theme {
-                return Response::success(json!({
-                    "status": "loaded",
-                    "siteId": site_id,
-                    "themeId": theme_id
-                }));
+                if site.id() == *site_id && theme.id() == *theme_id {
+                    return Response::success(json!({
+                        "status": "loaded",
+                        "site_id": site_id,
+                        "theme_id": theme_id
+                    }));
+                }
             }
 
-            // Otherwise, return error (in production, we'd attempt to load from IndexedDB)
-            return Response::error("Projects not found in memory");
+            let store_clone = self.clone();
+
+            // Load site data
+            console_log!("Loading site data from IndexedDB: {}", site_id);
+            let site_data = match crate::load_data(IDB_PROJECTS_STORE, &site_id).await {
+                Ok(data) => {
+                    console_log!("Site data loaded, size: {} bytes", data.length());
+                    data
+                }
+                Err(e) => {
+                    console_log!("Failed to load site data: {:#?}", e);
+                    return Response::Error(format!("Failed to load site: {:#?}", e));
+                }
+            };
+
+            // Load theme data
+            console_log!("Loading theme data from IndexedDB: {}", theme_id);
+            let theme_data = match crate::load_data(IDB_PROJECTS_STORE, &theme_id).await {
+                Ok(data) => {
+                    console_log!("Theme data loaded, size: {} bytes", data.length());
+                    data
+                }
+                Err(e) => {
+                    console_log!("Failed to load theme data: {:#?}", e);
+                    return Response::Error(format!("Failed to load theme: {:#?}", e));
+                }
+            };
+            // Convert JavaScript Uint8Array to Rust Vec<u8>
+            let site_data_value: wasm_bindgen::JsValue = site_data.into();
+            let site_bytes = StoreInner::to_vec_u8(&js_sys::Uint8Array::from(site_data_value))
+                .map_err(|e| Response::Error(format!("Failed to convert site data: {}", e)));
+            let site_bytes = match site_bytes {
+                Ok(bytes) => bytes,
+                Err(err) => return err,
+            };
+
+            let theme_data_value: wasm_bindgen::JsValue = theme_data.into();
+            let theme_bytes = StoreInner::to_vec_u8(&js_sys::Uint8Array::from(theme_data_value))
+                .map_err(|e| Response::Error(format!("Failed to convert theme data: {}", e)));
+
+            let theme_bytes = match theme_bytes {
+                Ok(bytes) => bytes,
+                Err(err) => return err,
+            };
+
+            // Import the site
+            console_log!("Importing site from loaded data");
+            let site = match Project::import(
+                site_bytes,
+                site_id.clone(),
+                ProjectType::Site,
+                0.0, // We could retrieve created time from metadata if needed
+                0.0, // We could retrieve updated time from metadata if needed
+            ) {
+                Ok(project) => project,
+                Err(e) => {
+                    console_log!("Failed to import site: {}", e);
+                    return Response::Error(format!("Failed to import site: {}", e));
+                }
+            };
+
+            // Import the theme
+            console_log!("Importing theme from loaded data");
+            let theme = match Project::import(
+                theme_bytes,
+                theme_id.clone(),
+                ProjectType::Theme,
+                0.0, // We could retrieve created time from metadata if needed
+                0.0, // We could retrieve updated time from metadata if needed
+            ) {
+                Ok(project) => project,
+                Err(e) => {
+                    console_log!("Failed to import theme: {}", e);
+                    return Response::Error(format!("Failed to import theme: {}", e));
+                }
+            };
+
+            // Set the loaded projects in the store
+            console_log!("Setting loaded projects in store");
+            if let Err(e) = store_clone.set_site(site) {
+                console_log!("Failed to set site: {}", e);
+                return Response::Error(format!("Failed to set site: {}", e));
+            }
+
+            if let Err(e) = store_clone.set_theme(theme) {
+                console_log!("Failed to set theme: {}", e);
+                return Response::Error(format!("Failed to set theme: {}", e));
+            }
+
+            // Return success with the loaded project IDs
+            console_log!("Projects loaded successfully");
+
+            Response::Success(json!({
+                "status": "loaded",
+                "siteId": site_id,
+                "themeId": theme_id
+            }))
         } else {
             console_log!("Loading default active projects");
 
-            // Try to load the active projects metadata from IndexedDB
-            // This would be an async operation in the full implementation:
-            // let metadata = load_data("organ_db", "projects_metadata", "active_projects").await?;
-
-            // For now, check if we have any projects in memory
+            // Check if we have any projects in memory
             if let (Some(site), Some(theme)) = (
                 self.active_site.lock().unwrap().clone(),
                 self.active_theme.lock().unwrap().clone(),
@@ -1116,7 +1340,17 @@ impl Store {
     fn get_active_file(&self) -> Response {
         console_log!("Getting active file");
 
-        match self.get_active_file_json() {
+        let file = &self.active_file.lock().unwrap();
+        let file = match file.as_ref().unwrap() {
+            FileType::Asset(asset) => self.get_active_file_json_generic::<Asset>(asset),
+            FileType::Template(template) => self.get_active_file_json_generic::<Template>(template),
+            FileType::Page(page) => self.get_active_file_json_generic::<Page>(page),
+            FileType::Text(text) => self.get_active_file_json_generic::<Text>(text),
+            FileType::Partial(partial) => self.get_active_file_json_generic::<Partial>(partial),
+            FileType::Post(post) => self.get_active_file_json_generic::<Post>(post),
+        };
+
+        match file {
             Ok((content, version)) => {
                 console_log!("Document retrieved successfully, version: {}", version);
                 Response::success(json!({
@@ -1158,10 +1392,10 @@ impl Store {
     // }
 
     // /// Get the active file and convert it to ProseMirror JSON format
-    fn get_active_file_json(&self) -> Result<(Value, i64), String> {
-        let file = &self.active_file.lock().unwrap();
-        let file = file.as_ref().unwrap().get_file();
-
+    fn get_active_file_json_generic<T: File + Default>(
+        &self,
+        file: &T,
+    ) -> Result<(Value, i64), String> {
         console_log!(
             "Getting active file: {}, version: {}",
             file.id().unwrap_or_default(),

@@ -1,8 +1,9 @@
+#[allow(unused)]
 #[cfg(test)]
 mod tests {
     use crate::{
         messages::{FileUpdate, Response},
-        ProjectType, Store, ID_KEY,
+        ProjectType, StoreInner, ID_KEY,
     };
 
     use super::*;
@@ -23,17 +24,17 @@ mod tests {
     #[wasm_bindgen_test]
     fn test_store_creation() {
         setup_panic_hook();
-        let store = Store::new();
+        let store = StoreInner::new();
         assert!(store.active_site.lock().unwrap().is_none());
         assert!(store.active_theme.lock().unwrap().is_none());
         assert!(store.active_file.lock().unwrap().is_none());
     }
 
     #[wasm_bindgen_test]
-    fn test_init_default() {
+    async fn test_init_default() {
         setup_panic_hook();
-        let store = Store::new();
-        let response = store.init_default();
+        let store = StoreInner::new();
+        let response = store.init_default().await;
 
         match response {
             Response::Success(_) => {
@@ -45,11 +46,11 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_create_theme() {
+    async fn test_create_theme() {
         setup_panic_hook();
-        let store = Store::new();
+        let store = StoreInner::new();
         let theme_name = "Test Theme";
-        let response = store.create_theme(theme_name.to_string());
+        let response = store.create_theme(theme_name.to_string()).await;
 
         match response {
             Response::Success(value) => {
@@ -68,12 +69,12 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_create_site() {
+    async fn test_create_site() {
         setup_panic_hook();
-        let store = Store::new();
+        let store = StoreInner::new();
 
         // First create a theme
-        let theme_response = store.create_theme("Test Theme".to_string());
+        let theme_response = store.create_theme("Test Theme".to_string()).await;
         let theme_id = match theme_response {
             Response::Success(value) => value["id"].as_str().unwrap().to_string(),
             Response::Error(e) => panic!("Failed to create theme: {}", e),
@@ -81,7 +82,9 @@ mod tests {
 
         // Then create a site
         let site_name = "Test Site";
-        let response = store.create_site(site_name.to_string(), theme_id.clone());
+        let response = store
+            .create_site(site_name.to_string(), theme_id.clone())
+            .await;
 
         match response {
             Response::Success(value) => {
@@ -101,12 +104,12 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_get_site() {
+    async fn test_get_site() {
         setup_panic_hook();
-        let store = Store::new();
+        let store = StoreInner::new();
 
         // First create a theme and site
-        let theme_response = store.create_theme("Test Theme".to_string());
+        let theme_response = store.create_theme("Test Theme".to_string()).await;
         let theme_id = match theme_response {
             Response::Success(value) => value["id"].as_str().unwrap().to_string(),
             Response::Error(e) => panic!("Failed to create theme: {}", e),
@@ -131,7 +134,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn test_get_theme() {
         setup_panic_hook();
-        let store = Store::new();
+        let store = StoreInner::new();
 
         // Create a theme
         let theme_name = "Test Theme";
@@ -150,18 +153,20 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_create_and_get_file() {
+    async fn test_create_and_get_file() {
         setup_panic_hook();
-        let store = Store::new();
+        let store = StoreInner::new();
         store.init_default();
 
         // Create a page file
         let file_name = "test-page";
-        let response = store.create_file(
-            "site".to_string(),
-            "page".to_string(),
-            file_name.to_string(),
-        );
+        let response = store
+            .create_file(
+                "site".to_string(),
+                "page".to_string(),
+                file_name.to_string(),
+            )
+            .await;
 
         // Check the response
         let file_id = match response {
@@ -174,7 +179,9 @@ mod tests {
         };
 
         // Get the file
-        let response = store.get_file("site".to_string(), "page".to_string(), file_id.clone());
+        let response = store
+            .get_file("site".to_string(), "page".to_string(), file_id.clone())
+            .await;
         match response {
             Response::Success(value) => {
                 let json = value.as_object().unwrap();
@@ -204,18 +211,20 @@ mod tests {
     ///     - collection.get_file()
     ///
     #[wasm_bindgen_test]
-    fn test_update_file() {
+    async fn test_update_file() {
         setup_panic_hook();
-        let store = Store::new();
+        let store = StoreInner::new();
         store.init_default(); //
 
         // Create a page file
         let file_name = "test-page";
-        let response = store.create_file(
-            "site".to_string(),
-            "page".to_string(),
-            file_name.to_string(),
-        );
+        let response = store
+            .create_file(
+                "site".to_string(),
+                "page".to_string(),
+                file_name.to_string(),
+            )
+            .await;
 
         // Check the response
         let file_id = match response {
@@ -233,17 +242,21 @@ mod tests {
         // Update the file name
         let new_name = "updated-page";
         let update = FileUpdate::SetName(new_name.to_string());
-        let response = store.update_file(
-            "site".to_string(),
-            "page".to_string(),
-            file_id.clone(),
-            update,
-        );
+        let response = store
+            .update_file(
+                "site".to_string(),
+                "page".to_string(),
+                file_id.clone(),
+                update,
+            )
+            .await;
 
         match response {
             Response::Success(_) => {
                 // Verify the update
-                let response = store.get_file("site".to_string(), "page".to_string(), file_id);
+                let response = store
+                    .get_file("site".to_string(), "page".to_string(), file_id)
+                    .await;
                 match response {
                     Response::Success(value) => {
                         let json = value.as_object().unwrap();
@@ -260,16 +273,17 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_list_files() {
+    async fn test_list_files() {
         setup_panic_hook();
-        let store = Store::new();
+        let store = StoreInner::new();
         store.init_default();
 
         // Create a few page files
         let file_names = vec!["page1", "page2", "page3"];
         for name in &file_names {
-            let response =
-                store.create_file("site".to_string(), "page".to_string(), name.to_string());
+            let response = store
+                .create_file("site".to_string(), "page".to_string(), name.to_string())
+                .await;
             console_log!("(test_list_files) Create file Response: {:?}", response);
             assert!(
                 matches!(response, Response::Success(_)),
@@ -279,7 +293,9 @@ mod tests {
         }
 
         // List the files
-        let response = store.list_files("site".to_string(), "page".to_string());
+        let response = store
+            .list_files("site".to_string(), "page".to_string())
+            .await;
         match response {
             Response::Success(value) => {
                 let files = value.as_array().expect("Files must be an array");

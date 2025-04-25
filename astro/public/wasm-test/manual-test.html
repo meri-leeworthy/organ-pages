@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WASM Direct Test</title>
+    <style>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 20px;
+        line-height: 1.5;
+      }
+
+      h1 {
+        border-bottom: 2px solid #eee;
+        padding-bottom: 10px;
+      }
+
+      pre {
+        background-color: #f8f9fa;
+        border-radius: 6px;
+        padding: 20px;
+        overflow: auto;
+      }
+
+      button {
+        background-color: #0366d6;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 4px;
+        font-size: 14px;
+        cursor: pointer;
+        margin-right: 10px;
+        margin-bottom: 10px;
+      }
+
+      button:hover {
+        background-color: #0353b4;
+      }
+
+      .result {
+        margin-top: 20px;
+      }
+
+      .success {
+        color: #28a745;
+      }
+
+      .error {
+        color: #dc3545;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>WASM Direct Test</h1>
+
+    <p>
+      This page tests direct interaction with the WASM module. Use this to
+      diagnose issues with the integration tests.
+    </p>
+
+    <div>
+      <button id="init-btn">1. Initialize WASM</button>
+      <button id="init-default-btn" disabled>
+        2. Initialize Default Projects
+      </button>
+      <button id="create-site-btn" disabled>3. Create Site</button>
+    </div>
+
+    <div class="result">
+      <h3>Result:</h3>
+      <pre id="result">Run a test to see results...</pre>
+    </div>
+
+    <script type="module">
+      // Import directly from the WASM module
+      // Make sure this points to your compiled WASM in the public directory
+      const wasmModule = "/wasm/minissg/minissg.js"
+
+      const resultEl = document.getElementById("result")
+      const initBtn = document.getElementById("init-btn")
+      const initDefaultBtn = document.getElementById("init-default-btn")
+      const createSiteBtn = document.getElementById("create-site-btn")
+
+      let actor
+
+      function showResult(message, isError = false) {
+        resultEl.textContent = message
+        resultEl.className = isError ? "error" : "success"
+      }
+
+      // Initialize WASM
+      initBtn.addEventListener("click", async () => {
+        try {
+          showResult("Initializing WASM module...")
+
+          // Dynamic import of WASM module
+          const wasmImport = await import(wasmModule)
+          const init = wasmImport.default
+
+          await init()
+
+          // Create Actor instance
+          actor = new wasmImport.Actor()
+
+          showResult(
+            "✅ WASM module initialized successfully.\nActor instance created."
+          )
+
+          // Enable next button
+          initDefaultBtn.disabled = false
+        } catch (error) {
+          console.error("WASM initialization error:", error)
+          showResult(
+            `❌ WASM initialization failed:\n${error.message || error}`,
+            true
+          )
+        }
+      })
+
+      // Initialize Default
+      initDefaultBtn.addEventListener("click", async () => {
+        try {
+          if (!actor) {
+            throw new Error(
+              "Actor not initialized. Please initialize WASM first."
+            )
+          }
+
+          showResult("Initializing default projects...")
+
+          // Create message
+          const message = { InitDefault: null }
+          const messageJson = JSON.stringify(message)
+
+          // Process message
+          const responseJson = actor.process_message(messageJson)
+          const response = JSON.parse(responseJson)
+
+          if (response.Error) {
+            throw new Error(response.Error)
+          }
+
+          showResult(
+            `✅ Default projects initialized:\n${JSON.stringify(response.Success, null, 2)}`
+          )
+
+          // Enable next button
+          createSiteBtn.disabled = false
+        } catch (error) {
+          console.error("InitDefault error:", error)
+          showResult(`❌ InitDefault failed:\n${error.message || error}`, true)
+        }
+      })
+
+      // Create Site
+      createSiteBtn.addEventListener("click", async () => {
+        try {
+          if (!actor) {
+            throw new Error(
+              "Actor not initialized. Please initialize WASM first."
+            )
+          }
+
+          showResult("Creating site...")
+
+          // First, get the theme
+          const getThemeMessage = { GetTheme: null }
+          const getThemeJson = JSON.stringify(getThemeMessage)
+          const getThemeResponseJson = actor.process_message(getThemeJson)
+          const getThemeResponse = JSON.parse(getThemeResponseJson)
+
+          if (getThemeResponse.Error) {
+            throw new Error(`Failed to get theme: ${getThemeResponse.Error}`)
+          }
+
+          const themeId = getThemeResponse.Success.id
+
+          // Create site with theme ID
+          const createSiteMessage = {
+            CreateSite: {
+              name: "Test Site",
+              theme_id: themeId,
+            },
+          }
+          const createSiteJson = JSON.stringify(createSiteMessage)
+          const createSiteResponseJson = actor.process_message(createSiteJson)
+          const createSiteResponse = JSON.parse(createSiteResponseJson)
+
+          if (createSiteResponse.Error) {
+            throw new Error(createSiteResponse.Error)
+          }
+
+          showResult(
+            `✅ Site created successfully:\n${JSON.stringify(createSiteResponse.Success, null, 2)}`
+          )
+        } catch (error) {
+          console.error("CreateSite error:", error)
+          showResult(`❌ CreateSite failed:\n${error.message || error}`, true)
+        }
+      })
+    </script>
+  </body>
+</html>

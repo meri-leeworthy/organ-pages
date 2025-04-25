@@ -1,12 +1,11 @@
 use crate::types::{FieldDefinition, FieldType};
-use crate::{ApplyMap, ID_KEY, VERSION_KEY};
+use crate::{ApplyMap, ID_KEY};
 use loro::{
     Container, ContainerTrait, LoroDoc, LoroMap, LoroTree, LoroValue, TreeID, ValueOrContainer,
 };
 
 use serde_json::Value;
 
-use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::marker::PhantomData;
 
@@ -20,8 +19,7 @@ use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
 
 // Use the full path to avoid duplicate imports and missing FileState
-use crate::model::file::{File, FileBuilder, FileStore, HasTitle, HasUrl};
-use crate::{Model, Project, ProjectType};
+use crate::model::file::{File, FileBuilder};
 
 pub const COLLECTIONS_KEY: &str = "collections";
 pub const FIELDS_KEY: &str = "fields";
@@ -50,6 +48,9 @@ pub struct CollectionBuilder<TFile: File> {
 
 impl<TFile: File> CollectionBuilder<TFile> {
     pub fn new(name: String) -> Result<Self, String> {
+        if name.is_empty() {
+            return Err("Collection name cannot be empty".to_string());
+        }
         let map = LoroMap::new();
         let fields_map = LoroMap::new();
         let files_tree = LoroTree::new();
@@ -164,7 +165,7 @@ impl<TFile: File> CollectionBuilder<TFile> {
             }
         };
 
-        console_log!("Built attached Collection: {:?}", self.name);
+        console_log!("(build) Built attached Collection: {:?}", self.name);
 
         let collection = Collection {
             name: self.name,
@@ -279,13 +280,23 @@ impl<TFile: File> Collection<TFile> {
         &self,
         name: &str,
         collection_type: &str,
+        store: crate::FileStore,
     ) -> Result<FileBuilder<TFile>, String> {
-        console_log!("Creating file: {:?}", name);
-        TFile::builder_for(collection_type).with_name(name.to_string())
+        console_log!("(create_file) name: {:?}", name);
+        match store {
+            crate::FileStore::Full(doc) => TFile::builder_for(collection_type)
+                .with_doc(doc)
+                .expect("(create_file) Failed to set doc")
+                .with_name(name.to_string()),
+            crate::FileStore::Cache(map) => TFile::builder_for(collection_type)
+                .with_meta(map)
+                .expect("(create_file) Failed to set map")
+                .with_name(name.to_string()),
+        }
     }
 
-    pub fn attach_file(&self, file_builder: FileBuilder<TFile>) -> Result<TFile, String> {
-        self.attach_file_with_parent(file_builder, None)
+    pub async fn attach_file(&self, file_builder: FileBuilder<TFile>) -> Result<TFile, String> {
+        self.attach_file_with_parent(file_builder, None).await
     }
 
     /// Attach a file to the collection file tree, with a parent file
@@ -293,7 +304,7 @@ impl<TFile: File> Collection<TFile> {
     /// The file tree meta map is a cache of file metadata. The file
     /// LoroDoc meta map itself is the source of truth.
     ///
-    pub fn attach_file_with_parent(
+    pub async fn attach_file_with_parent(
         &self,
         file_builder: FileBuilder<TFile>,
         parent_id: Option<TreeID>,
@@ -301,33 +312,53 @@ impl<TFile: File> Collection<TFile> {
         // Get the files tree
         let files_tree = self.files_tree()?;
 
+        let mut file_builder = file_builder;
+
         // Create a temp file to get the metadata
         let file_meta = file_builder.meta().map_err(|e| e.to_string())?;
 
         // Check if we have an ID
         let id = match file_meta.get(ID_KEY) {
             Some(ValueOrContainer::Value(LoroValue::String(id))) => id.to_string(),
-            _ => return Err("(attach_file) File ID not found".to_string()),
+            _ => {
+                file_builder = file_builder.with_new_id()?;
+                file_builder.id().unwrap()
+            }
         };
 
-        // Create a new node
+        // Create a new node on the files tree, add ID to it
         let node_id = files_tree
             .create(parent_id)
-            .map_err(|e| format!("Failed to create node: {}", e))?;
+            .map_err(|e| format!("(attach_file) Failed to create node: {}", e))?;
 
         let node_meta = files_tree
             .get_meta(node_id)
-            .map_err(|e| format!("Failed to get node meta: {}", e))?;
+            .map_err(|e| format!("(attach_file) Failed to get node meta: {}", e))?;
 
         node_meta
             .insert("id", id.clone())
-            .map_err(|e| format!("Failed to insert ID: {}", e))?;
+            .map_err(|e| format!("(attach_file) Failed to insert ID: {}", e))?;
 
-        // other properties?
+        let version = match file_meta.get(crate::VERSION_KEY) {
+            Some(ValueOrContainer::Value(LoroValue::I64(version))) => version,
+            _ => 0,
+        };
+        node_meta
+            .insert(crate::VERSION_KEY, version)
+            .map_err(|e| format!("(attach_file) Failed to insert version: {}", e))?;
+
+        let name = match file_meta.get(crate::NAME_KEY) {
+            Some(ValueOrContainer::Value(LoroValue::String(name))) => name.to_string(),
+            _ => "".to_string(),
+        };
+        node_meta
+            .insert(crate::NAME_KEY, name.clone())
+            .map_err(|e| format!("(attach_file) Failed to insert name: {}", e))?;
 
         // Build the file
         let file = file_builder
             .build()
+            .await
             .map_err(|e| format!("Failed to build file: {}", e))?;
 
         // Return the file - FileState is no longer set here
@@ -339,7 +370,7 @@ impl<TFile: File> Collection<TFile> {
     /// The file tree meta map is a cache of file metadata. The file
     /// LoroDoc meta map itself is the source of truth.
     /// This method gets the (cached) file metadata from the file tree meta map.
-    pub fn get_file(&self, file_id: &str, collection_type: &str) -> Result<TFile, String> {
+    pub async fn get_file(&self, file_id: &str, collection_type: &str) -> Result<TFile, String> {
         // Check if the file tree is attached
         if !self.map.is_attached() {
             return Err("(get_file) Map is not attached".to_string());
@@ -383,13 +414,14 @@ impl<TFile: File> Collection<TFile> {
             .with_meta(node_meta.clone())
             .map_err(|e| format!("(get_file) with_meta: {}", e))?
             .build()
+            .await
             .map_err(|e| format!("(get_file) build: {}", e))?;
 
         // FileState is no longer set here
         Ok(target_file)
     }
 
-    pub fn get_files(&self, collection_type: &str) -> Result<Vec<TFile>, String> {
+    pub async fn get_files(&self, collection_type: &str) -> Result<Vec<TFile>, String> {
         // Check if the file tree is attached
         if !self.map.is_attached() {
             return Err("(get_files) Map is not attached".to_string());
@@ -423,16 +455,16 @@ impl<TFile: File> Collection<TFile> {
             }
 
             // Create a file builder
-            let file_builder = match TFile::builder_for(collection_type)
+            let file = match TFile::builder_for(collection_type)
                 .with_meta(meta.clone())
                 .map_err(|e| format!("(get_files) Meta Map not valid: {}", e))
             {
-                Ok(builder) => builder.build(),
+                Ok(builder) => builder.build().await,
                 Err(e) => return Err(format!("(get_files) Meta Map not valid: {}", e)),
             };
 
-            match file_builder {
-                Ok(mut file) => {
+            match file {
+                Ok(file) => {
                     // FileState is no longer set here
                     result.push(file);
                 }
@@ -450,6 +482,10 @@ impl<TFile: File> Collection<TFile> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use crate::{FileStore, HasTitle};
+
     use super::*;
     use wasm_bindgen_test::*;
     wasm_bindgen_test_configure!(run_in_browser);
@@ -469,34 +505,35 @@ mod tests {
             FileBuilder::new("test")
         }
 
-        fn init(&mut self, meta: Option<&LoroMap>) -> Result<(), String> {
-            self.set_type("test")?;
+        async fn init(&mut self, meta: Option<&LoroMap>) -> Result<(), String> {
+            self.set_type("test").await?;
 
             if let Some(meta) = meta {
                 if let Some(ValueOrContainer::Value(LoroValue::String(id))) = meta.get("id") {
-                    self.set_id(&id)?;
+                    self.set_id(&id).await?;
                 }
                 if let Some(ValueOrContainer::Value(LoroValue::String(name))) = meta.get("name") {
-                    self.set_name(&name)?;
+                    self.set_name(&name).await?;
                 }
                 if let Some(ValueOrContainer::Value(LoroValue::String(version))) =
                     meta.get("version")
                 {
-                    self.set_version(version.parse().unwrap_or(0))?;
+                    self.set_version(version.parse().unwrap_or(0)).await?;
                 } else if let Some(ValueOrContainer::Value(LoroValue::I64(version))) =
                     meta.get("version")
                 {
-                    self.set_version(version)?;
+                    self.set_version(version).await?;
                 }
             }
             Ok(())
         }
 
-        fn build_from(builder: FileBuilder<Self>) -> Result<Self, String> {
+        async fn build_from(builder: FileBuilder<Self>) -> Result<Self, String> {
             let store = builder.store.ok_or("No file store provided")?;
 
             let mut file = TestFile { store };
             file.init(None)
+                .await
                 .map_err(|e| format!("Failed to initialize test file: {}", e))?;
             Ok(file)
         }
@@ -518,17 +555,19 @@ mod tests {
         }
     }
 
-    impl HasTitle for TestFile {}
-    impl HasUrl for TestFile {}
+    impl crate::HasTitle for TestFile {}
+    impl crate::HasUrl for TestFile {}
 
-    fn setup_test_collection() -> Collection<TestFile> {
-        let mut project = Project::new(ProjectType::Site, Some("test_theme".to_string()))
-            .expect("Failed to create project");
+    async fn setup_test_collection() -> Collection<TestFile> {
+        let mut project =
+            crate::Project::new(crate::ProjectType::Site, Some("test_theme".to_string()))
+                .await
+                .expect("Failed to create project");
         console_log!("Adding Collection {:?}", "test");
         let collection = project
             .add_collection::<TestFile>(
                 "test",
-                Model {
+                crate::Model {
                     fields: HashMap::new(),
                 },
             )
@@ -540,8 +579,8 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_collection_creation() {
-        let collection = setup_test_collection();
+    async fn test_collection_creation() {
+        let collection = setup_test_collection().await;
         assert_eq!(collection.name(), "test");
     }
 
@@ -581,16 +620,17 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_create_file() {
-        let collection = setup_test_collection();
+    async fn test_create_file() {
+        let collection = setup_test_collection().await;
 
         // Test creating a file
         let file_builder = collection
-            .create_file("test_file", "test")
+            .create_file("test_file", "test", crate::FileStore::Cache(LoroMap::new()))
             .expect("Failed to create file");
 
         let file = collection
             .attach_file(file_builder)
+            .await
             .expect("Failed to attach file");
 
         assert_eq!(file.get_type(), "test");
@@ -598,16 +638,21 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_create_file_with_parent() {
-        let collection = setup_test_collection();
+    async fn test_create_file_with_parent() {
+        let collection = setup_test_collection().await;
 
         // Create parent file first
         let parent_file_builder = collection
-            .create_file("parent_file", "test")
+            .create_file(
+                "parent_file",
+                "test",
+                crate::FileStore::Cache(LoroMap::new()),
+            )
             .expect("Failed to create parent file");
 
         let parent_file = collection
             .attach_file(parent_file_builder)
+            .await
             .expect("Failed to attach parent file");
 
         console_log!("Parent file: {:?}", parent_file);
@@ -638,11 +683,16 @@ mod tests {
 
         // Create child file
         let child_file_builder = collection
-            .create_file("child_file", "test")
+            .create_file(
+                "child_file",
+                "test",
+                crate::FileStore::Cache(LoroMap::new()),
+            )
             .expect("Failed to create child file");
 
         let child_file = collection
             .attach_file_with_parent(child_file_builder, Some(parent_node.id))
+            .await
             .expect("Failed to attach child file");
 
         assert_eq!(child_file.get_type(), "test");
@@ -651,16 +701,17 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_get_file() {
-        let collection = setup_test_collection();
+    async fn test_get_file() {
+        let collection = setup_test_collection().await;
 
         // Create a file first
         let created_file = collection
-            .create_file("test_file", "test")
+            .create_file("test_file", "test", crate::FileStore::Cache(LoroMap::new()))
             .expect("Failed to create file");
 
         let file = collection
             .attach_file(created_file)
+            .await
             .expect("Failed to attach file");
 
         console_log!("Created file: {:?}", file);
@@ -669,37 +720,43 @@ mod tests {
         // Test getting the file
         let retrieved_file = collection
             .get_file(&file_id, "test")
+            .await
             .expect("Failed to get file");
         assert_eq!(retrieved_file.id().unwrap(), file_id);
         assert_eq!(retrieved_file.get_type(), "test");
     }
 
     #[wasm_bindgen_test]
-    fn test_get_files() {
-        let collection = setup_test_collection();
+    async fn test_get_files() {
+        let collection = setup_test_collection().await;
 
         console_log!("Created Collection. Creating file builders");
 
         // Create multiple files
         let file_builder1 = collection
-            .create_file("file1", "test")
+            .create_file("file1", "test", crate::FileStore::Cache(LoroMap::new()))
             .expect("Failed to create file1");
         let file_builder2 = collection
-            .create_file("file2", "test")
+            .create_file("file2", "test", crate::FileStore::Cache(LoroMap::new()))
             .expect("Failed to create file2");
 
         console_log!("Attaching files");
 
         let file1 = collection
             .attach_file(file_builder1)
+            .await
             .expect("Failed to attach file1");
         let file2 = collection
             .attach_file(file_builder2)
+            .await
             .expect("Failed to attach file2");
 
         console_log!("Getting files");
 
-        let files = collection.get_files("test").expect("Failed to get files");
+        let files = collection
+            .get_files("test")
+            .await
+            .expect("Failed to get files");
 
         console_log!("Files: {:?}", files);
 
@@ -711,25 +768,31 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_file_state_transitions_in_collection() {
-        let collection = setup_test_collection();
+    async fn test_file_state_transitions_in_collection() {
+        let collection = setup_test_collection().await;
 
         // Create a new file
         let file_builder = collection
-            .create_file("test_file", "test")
+            .create_file("test_file", "test", crate::FileStore::Cache(LoroMap::new()))
             .expect("Failed to create file");
 
         // After building but before attachment
-        let file = file_builder.clone().build().expect("Failed to build file");
+        let file = file_builder
+            .clone()
+            .build()
+            .await
+            .expect("Failed to build file");
 
         // After attachment - just verify the file was attached successfully
         let attached_file = collection
             .attach_file(file_builder)
+            .await
             .expect("Failed to attach file");
 
         // Verify we can retrieve the file
         let retrieved_file = collection
             .get_file(&attached_file.id().unwrap(), "test")
+            .await
             .expect("Failed to get file");
 
         // Instead verify that it's the same file
@@ -737,15 +800,16 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_file_state_transitions_with_parent() {
-        let collection = setup_test_collection();
+    async fn test_file_state_transitions_with_parent() {
+        let collection = setup_test_collection().await;
 
         // Create and attach parent file
         let parent_builder = collection
-            .create_file("parent", "test")
+            .create_file("parent", "test", crate::FileStore::Cache(LoroMap::new()))
             .expect("Failed to create parent file");
         let parent = collection
             .attach_file(parent_builder)
+            .await
             .expect("Failed to attach parent file");
 
         // Get parent's tree ID - test still should work, just no state assertions
@@ -765,10 +829,11 @@ mod tests {
 
         // Create and attach child file
         let child_builder = collection
-            .create_file("child", "test")
+            .create_file("child", "test", crate::FileStore::Cache(LoroMap::new()))
             .expect("Failed to create child file");
         let child = collection
             .attach_file_with_parent(child_builder, Some(parent_node.id))
+            .await
             .expect("Failed to attach child file");
 
         // Just verify the ids are different
@@ -776,23 +841,27 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_collection_file_operations() {
-        let collection = setup_test_collection();
+    async fn test_collection_file_operations() {
+        let collection = setup_test_collection().await;
 
         // Test file creation without state transitions
         let file_builder = collection
-            .create_file("test_file", "test")
+            .create_file("test_file", "test", crate::FileStore::Cache(LoroMap::new()))
             .expect("Failed to create file");
 
         let file = collection
             .attach_file(file_builder)
+            .await
             .expect("Failed to attach file");
 
         // Just verify it has a valid ID
         assert!(!file.id().unwrap().is_empty());
 
         // Test retrieving files - verify length and ID only
-        let files = collection.get_files("test").expect("Failed to get files");
+        let files = collection
+            .get_files("test")
+            .await
+            .expect("Failed to get files");
         assert_eq!(files.len(), 1);
 
         // Verify the file ID matches
@@ -800,16 +869,16 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_collection_error_handling() {
-        let collection = setup_test_collection();
+    async fn test_collection_error_handling() {
+        let collection = setup_test_collection().await;
 
         // Test getting non-existent file
-        let result = collection.get_file("nonexistent_id", "test");
+        let result = collection.get_file("nonexistent_id", "test").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
 
         // Test getting files with wrong type
-        let result = collection.get_files("nonexistent_type");
+        let result = collection.get_files("nonexistent_type").await;
         assert_eq!(result.unwrap().len(), 0); // Should return empty list, not error
     }
 
@@ -839,9 +908,9 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_collection_creation_options() {
+    async fn test_collection_creation_options() {
         // Test collection creation with detailed model
-        let mut model = Model {
+        let mut model = crate::Model {
             fields: HashMap::new(),
         };
 
@@ -863,8 +932,10 @@ mod tests {
             },
         );
 
-        let mut project = Project::new(ProjectType::Site, Some("test_theme".to_string()))
-            .expect("Failed to create project");
+        let mut project =
+            crate::Project::new(crate::ProjectType::Site, Some("test_theme".to_string()))
+                .await
+                .expect("Failed to create project");
 
         let collection = project
             .add_collection::<TestFile>("custom_model", model)

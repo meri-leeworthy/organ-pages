@@ -1,9 +1,9 @@
 pub mod js_conversions {
-    use super::*;
+    
     use crate::model::{Collection, File};
     use crate::types::{FieldType, ProjectType};
     use serde_json::{json, Value};
-    use std::collections::HashMap;
+    
     use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen]

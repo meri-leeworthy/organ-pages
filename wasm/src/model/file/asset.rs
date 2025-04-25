@@ -1,5 +1,5 @@
 use crate::model::file::{Chainable, File, FileBuilder, FileStore, HasAlt, HasMimeType, HasUrl};
-use loro::{LoroDoc, LoroError, LoroMap};
+use loro::LoroMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -22,8 +22,8 @@ impl File for Asset {
         FileBuilder::new("asset")
     }
 
-    fn init(&mut self, meta: Option<&LoroMap>) -> Result<(), String> {
-        self.set_type("asset")?;
+    async fn init(&mut self, meta: Option<&LoroMap>) -> Result<(), String> {
+        self.set_type("asset").await?;
 
         let id = self
             .load_string_field_with_meta(meta, "id")
@@ -44,22 +44,23 @@ impl File for Asset {
             .load_string_field_with_meta(meta, "alt")
             .unwrap_or(self.get_alt().unwrap_or_default());
 
-        self.set_id(&id)?;
-        self.set_name(&name)?;
-        self.set_version(version)?;
-        self.set_mime_type(&mime_type)?;
-        self.set_url(&url)?;
-        self.set_alt(&alt)?;
+        self.set_id(&id).await?;
+        self.set_name(&name).await?;
+        self.set_version(version).await?;
+        self.set_mime_type(&mime_type).await?;
+        self.set_url(&url).await?;
+        self.set_alt(&alt).await?;
         Ok(())
     }
 
-    fn build_from(builder: FileBuilder<Self>) -> Result<Self, String> {
+    async fn build_from(builder: FileBuilder<Self>) -> Result<Self, String> {
         // Ensure we have a store
         let store = builder.store.ok_or("No file store provided")?;
 
         let mut asset = Asset { store };
         asset
             .init(None)
+            .await
             .map_err(|e| format!("Failed to initialize asset: {}", e))?;
         Ok(asset)
     }
@@ -125,50 +126,81 @@ mod tests {
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     #[wasm_bindgen_test]
-    fn test_asset_builder() {
-        let asset = Asset::builder().build().expect("Failed to build asset");
+    async fn test_asset_builder() {
+        let asset = Asset::builder()
+            .with_meta(LoroMap::new())
+            .expect("Failed to set meta")
+            .build()
+            .await
+            .expect("Failed to build asset");
 
         assert_eq!(asset.version().unwrap(), 0);
         assert!(!asset.id().unwrap().is_empty());
     }
 
     #[wasm_bindgen_test]
-    fn test_asset_url() {
-        let mut asset = Asset::builder().build().expect("Failed to build asset");
+    async fn test_asset_url() {
+        let mut asset = Asset::builder()
+            .with_meta(LoroMap::new())
+            .expect("Failed to set meta")
+            .build()
+            .await
+            .expect("Failed to build asset");
 
         // Test setting and getting URL
-        asset.set_url("/test-asset.jpg").expect("Failed to set URL");
+        asset
+            .set_url("/test-asset.jpg")
+            .await
+            .expect("Failed to set URL");
         let url = asset.get_url().expect("Failed to get URL");
         assert_eq!(url, "/test-asset.jpg");
     }
 
     #[wasm_bindgen_test]
-    fn test_asset_mime_type() {
-        let mut asset = Asset::builder().build().expect("Failed to build asset");
+    async fn test_asset_mime_type() {
+        let mut asset = Asset::builder()
+            .with_meta(LoroMap::new())
+            .expect("Failed to set meta")
+            .build()
+            .await
+            .expect("Failed to build asset");
 
         // Test setting and getting mime type
         asset
             .set_mime_type("image/jpeg")
+            .await
             .expect("Failed to set mime type");
         let mime_type = asset.get_mime_type().expect("Failed to get mime type");
         assert_eq!(mime_type, "image/jpeg");
     }
 
     #[wasm_bindgen_test]
-    fn test_asset_alt() {
-        let mut asset = Asset::builder().build().expect("Failed to build asset");
+    async fn test_asset_alt() {
+        let asset = Asset::builder()
+            .with_meta(LoroMap::new())
+            .expect("Failed to set meta")
+            .build()
+            .await
+            .expect("Failed to build asset");
 
         // Test setting and getting alt text
-        asset.set_alt("Test image").expect("Failed to set alt text");
+        asset
+            .set_alt("Test image")
+            .await
+            .expect("Failed to set alt text");
         let alt = asset.get_alt().expect("Failed to get alt text");
         assert_eq!(alt, "Test image");
     }
 
     #[wasm_bindgen_test]
-    fn test_asset_init() {
+    async fn test_asset_init() {
         let mut asset = Asset::builder()
+            .with_meta(LoroMap::new())
+            .expect("Failed to set meta")
             .with_id("test-id".to_string())
+            .expect("Failed to set id")
             .build()
+            .await
             .expect("Failed to build asset");
 
         // Create a meta map with test data
@@ -179,7 +211,10 @@ mod tests {
         meta.insert("url", "/test-asset.jpg");
         meta.insert("alt", "Test image");
 
-        asset.init(Some(&meta)).expect("Failed to initialize asset");
+        asset
+            .init(Some(&meta))
+            .await
+            .expect("Failed to initialize asset");
 
         assert_eq!(asset.name().unwrap(), "test-name");
         assert_eq!(asset.get_type(), "asset");
@@ -189,20 +224,32 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_asset_equality() {
+    async fn test_asset_equality() {
         let asset1 = Asset::builder()
+            .with_meta(LoroMap::new())
+            .expect("Failed to set meta")
             .with_id("test-id".to_string())
+            .expect("Failed to set id")
             .build()
+            .await
             .expect("Failed to build asset");
 
         let asset2 = Asset::builder()
+            .with_meta(LoroMap::new())
+            .expect("Failed to set meta")
             .with_id("test-id".to_string())
+            .expect("Failed to set id")
             .build()
+            .await
             .expect("Failed to build asset");
 
         let asset3 = Asset::builder()
+            .with_meta(LoroMap::new())
+            .expect("Failed to set meta")
             .with_id("different-id".to_string())
+            .expect("Failed to set id")
             .build()
+            .await
             .expect("Failed to build asset");
 
         // Assets are equal if they have the same id, regardless of other fields
@@ -211,44 +258,55 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_asset_mime_type_validation() {
-        let mut asset = Asset::builder().build().expect("Failed to build asset");
+    async fn test_asset_mime_type_validation() {
+        let asset = Asset::builder()
+            .build()
+            .await
+            .expect("Failed to build asset");
 
         // Test valid mime types
         asset
             .set_mime_type("image/jpeg")
+            .await
             .expect("Failed to set mime type");
         assert_eq!(asset.get_mime_type().unwrap(), "image/jpeg");
 
         asset
             .set_mime_type("application/json")
+            .await
             .expect("Failed to set mime type");
         assert_eq!(asset.get_mime_type().unwrap(), "application/json");
 
         // Test empty mime type
         asset
             .set_mime_type("")
+            .await
             .expect("Failed to set empty mime type");
         assert_eq!(asset.get_mime_type().unwrap(), "");
 
         // Test invalid mime type format
         asset
             .set_mime_type("invalid-mime-type")
+            .await
             .expect("Failed to set invalid mime type");
         assert_eq!(asset.get_mime_type().unwrap(), "invalid-mime-type");
     }
 
     #[wasm_bindgen_test]
-    fn test_asset_url_edge_cases() {
-        let mut asset = Asset::builder().build().expect("Failed to build asset");
+    async fn test_asset_url_edge_cases() {
+        let asset = Asset::builder()
+            .build()
+            .await
+            .expect("Failed to build asset");
 
         // Test empty URL
-        asset.set_url("").expect("Failed to set empty URL");
+        asset.set_url("").await.expect("Failed to set empty URL");
         assert_eq!(asset.get_url().unwrap(), "");
 
         // Test URL with special characters
         asset
             .set_url("/path/with spaces and #special @chars")
+            .await
             .expect("Failed to set URL with special chars");
         assert_eq!(
             asset.get_url().unwrap(),
@@ -257,21 +315,31 @@ mod tests {
 
         // Test very long URL
         let long_url = format!("/{}", "a".repeat(1000));
-        asset.set_url(&long_url).expect("Failed to set long URL");
+        asset
+            .set_url(&long_url)
+            .await
+            .expect("Failed to set long URL");
         assert_eq!(asset.get_url().unwrap(), long_url);
     }
 
     #[wasm_bindgen_test]
-    fn test_asset_alt_edge_cases() {
-        let mut asset = Asset::builder().build().expect("Failed to build asset");
+    async fn test_asset_alt_edge_cases() {
+        let asset = Asset::builder()
+            .build()
+            .await
+            .expect("Failed to build asset");
 
         // Test empty alt text
-        asset.set_alt("").expect("Failed to set empty alt text");
+        asset
+            .set_alt("")
+            .await
+            .expect("Failed to set empty alt text");
         assert_eq!(asset.get_alt().unwrap(), "");
 
         // Test alt text with special characters
         asset
             .set_alt("Alt text with 特殊文字 and symbols @#$%")
+            .await
             .expect("Failed to set alt text with special chars");
         assert_eq!(
             asset.get_alt().unwrap(),
@@ -282,6 +350,7 @@ mod tests {
         let long_alt = "a".repeat(1000);
         asset
             .set_alt(&long_alt)
+            .await
             .expect("Failed to set long alt text");
         assert_eq!(asset.get_alt().unwrap(), long_alt);
     }

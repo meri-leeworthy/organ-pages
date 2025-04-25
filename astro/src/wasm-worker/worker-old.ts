@@ -1,24 +1,46 @@
 // Web Worker for communicating with the WASM Actor
-
-// We'll need to initialize the WASM module
-import init, { Actor } from "../wasm/minissg/minissg.js"
+import init, { Store } from "../../public/wasm/minissg/minissg.js"
+import type { Message, ProjectType } from "./types.js"
 
 // Global variables
-let actor = null
+let store: Store | null = null
 let initialized = false
-let initPromise = null
+let initPromise: Promise<void> | null = null
 
 // Constants for IndexedDB
 const DB_NAME = "organ-static-projects"
 const STORE_NAME = "projects"
 const META_STORE_NAME = "metadata"
-const DB_VERSION = 1
+const DOCUMENT_STORE_NAME = "documents"
+const DB_VERSION = 2 // Increased version for document store
+
+// Type definitions for IndexedDB
+interface ProjectData {
+  id: string
+  binary: Uint8Array
+  metadata: ProjectMetadata
+  updatedAt: number
+}
+
+interface ProjectMetadata {
+  id: string
+  type: string
+  createdAt: number
+  updatedAt: number
+}
+
+interface ProjectMetadataStore {
+  projectList: string[]
+  activeSiteId: string | null
+  activeThemeId: string | null
+  activeProjectType: string | null
+}
 
 /**
  * Initialize the WASM module
  * @returns {Promise<void>} - A promise that resolves when the WASM module is initialized
  */
-async function initWasm() {
+async function initWasm(): Promise<void> {
   if (initialized) {
     return Promise.resolve()
   }
@@ -29,7 +51,7 @@ async function initWasm() {
 
   initPromise = init()
     .then(() => {
-      actor = new Actor()
+      store = new Store()
       initialized = true
     })
     .catch(error => {
@@ -44,30 +66,63 @@ async function initWasm() {
  * Open and initialize IndexedDB
  * @returns {Promise<IDBDatabase>} - A promise that resolves to the IndexedDB database
  */
-async function openDatabase() {
+async function openDatabase(): Promise<IDBDatabase> {
+  // For development only - force clear database to ensure new schema
+  // const isDevelopment = true
+
+  // if (isDevelopment) {
+  //   try {
+  //     console.log("[Worker] Development mode: clearing IndexedDB")
+  //     await clearIndexedDB()
+  //   } catch (err) {
+  //     console.warn("[Worker] Error clearing IndexedDB:", err)
+  //   }
+  // }
+
   return new Promise((resolve, reject) => {
+    console.log(
+      `[Worker] Opening database ${DB_NAME} with version ${DB_VERSION}`
+    )
     const request = indexedDB.open(DB_NAME, DB_VERSION)
 
     request.onerror = event => {
-      console.error("[Worker] Error opening database:", event.target.error)
+      console.error(
+        "[Worker] Error opening database:",
+        (event.target as IDBRequest).error
+      )
       reject("Error opening database")
     }
 
     request.onsuccess = event => {
-      resolve(event.target.result)
+      const db = (event.target as IDBOpenDBRequest).result
+      console.log(
+        "[Worker] Database opened successfully. Object stores:",
+        Array.from(db.objectStoreNames)
+      )
+      resolve(db)
     }
 
     request.onupgradeneeded = event => {
-      const db = event.target.result
-      // Create projects store if it doesn't exist
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: "id" })
-      }
+      console.log("[Worker] Database upgrade needed, creating stores")
+      const db = (event.target as IDBOpenDBRequest).result
+      const oldVersion = event.oldVersion
 
-      // Create metadata store for active project IDs and project list
-      if (!db.objectStoreNames.contains(META_STORE_NAME)) {
+      // First-time creation
+      if (oldVersion < 1) {
+        console.log("[Worker] Creating initial stores (v1)")
+        db.createObjectStore(STORE_NAME, { keyPath: "id" })
         db.createObjectStore(META_STORE_NAME)
       }
+
+      // Upgrade to version 2: add document store
+      if (oldVersion < 2) {
+        console.log("[Worker] Upgrading to v2: adding document store")
+        if (!db.objectStoreNames.contains(DOCUMENT_STORE_NAME)) {
+          db.createObjectStore(DOCUMENT_STORE_NAME, { keyPath: "id" })
+        }
+      }
+
+      console.log("[Worker] Database upgrade complete")
     }
   })
 }
@@ -78,13 +133,17 @@ async function openDatabase() {
  * @param {string} binary - The binary data of the project
  * @param {object} metadata - The metadata of the project
  */
-async function saveProjectToIDB(id, binary, metadata) {
+async function saveProjectToIDB(
+  id: string,
+  binary: Uint8Array,
+  metadata: ProjectMetadata
+): Promise<void> {
   const db = await openDatabase()
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], "readwrite")
     const store = transaction.objectStore(STORE_NAME)
 
-    const project = {
+    const project: ProjectData = {
       id,
       binary,
       metadata,
@@ -95,7 +154,10 @@ async function saveProjectToIDB(id, binary, metadata) {
 
     request.onsuccess = () => resolve()
     request.onerror = event => {
-      console.error("[Worker] Error saving project:", event.target.error)
+      console.error(
+        "[Worker] Error saving project:",
+        (event.target as IDBRequest).error
+      )
       reject("Error saving project")
     }
   })
@@ -106,7 +168,7 @@ async function saveProjectToIDB(id, binary, metadata) {
  * @param {string} id - The ID of the project to load
  * @returns {Promise<object>} - A promise that resolves to the project object
  */
-async function loadProjectFromIDB(id) {
+async function loadProjectFromIDB(id: string): Promise<ProjectData | null> {
   const db = await openDatabase()
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], "readonly")
@@ -128,7 +190,10 @@ async function loadProjectFromIDB(id) {
     }
 
     request.onerror = event => {
-      console.error("[Worker] Error loading project:", event.target.error)
+      console.error(
+        "[Worker] Error loading project:",
+        (event.target as IDBRequest).error
+      )
       reject("Error loading project")
     }
   })
@@ -138,7 +203,7 @@ async function loadProjectFromIDB(id) {
  * Get all project IDs from IndexedDB
  * @returns {Promise<string[]>} - A promise that resolves to an array of project IDs
  */
-async function getAllProjectIds() {
+async function getAllProjectIds(): Promise<string[]> {
   const db = await openDatabase()
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], "readonly")
@@ -147,11 +212,14 @@ async function getAllProjectIds() {
     const request = store.getAllKeys()
 
     request.onsuccess = () => {
-      resolve(request.result)
+      resolve(request.result as string[])
     }
 
     request.onerror = event => {
-      console.error("[Worker] Error getting project IDs:", event.target.error)
+      console.error(
+        "[Worker] Error getting project IDs:",
+        (event.target as IDBRequest).error
+      )
       reject("Error getting project IDs")
     }
   })
@@ -164,20 +232,28 @@ async function getAllProjectIds() {
  * @param {string} activeThemeId - The ID of the active theme
  * @param {string} activeProjectType - The type of the active project
  */
-async function saveUIState(projects, siteId, themeId, activeProjectType) {
+async function saveUIState(
+  projects: string[],
+  siteId?: string,
+  themeId?: string,
+  activeProjectType?: string
+): Promise<void> {
   const db = await openDatabase()
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([META_STORE_NAME], "readwrite")
     const store = transaction.objectStore(META_STORE_NAME)
 
     store.put(projects, "projectList")
-    store.put(siteId, "activeSiteId")
-    store.put(themeId, "activeThemeId")
-    store.put(activeProjectType, "activeProjectType")
+    if (siteId) store.put(siteId, "activeSiteId")
+    if (themeId) store.put(themeId, "activeThemeId")
+    if (activeProjectType) store.put(activeProjectType, "activeProjectType")
 
     transaction.oncomplete = () => resolve()
     transaction.onerror = event => {
-      console.error("[Worker] Error saving metadata:", event.target.error)
+      console.error(
+        "[Worker] Error saving metadata:",
+        (event.target as IDBTransaction).error
+      )
       reject("Error saving metadata")
     }
   })
@@ -187,7 +263,7 @@ async function saveUIState(projects, siteId, themeId, activeProjectType) {
  * Load project metadata from IndexedDB
  * @returns {Promise<object>} - A promise that resolves to the project metadata object
  */
-async function loadProjectMetadata() {
+async function loadProjectMetadata(): Promise<ProjectMetadataStore> {
   const db = await openDatabase()
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([META_STORE_NAME], "readonly")
@@ -198,7 +274,7 @@ async function loadProjectMetadata() {
     const activeThemeIdRequest = store.get("activeThemeId")
     const activeProjectTypeRequest = store.get("activeProjectType")
 
-    const result = {
+    const result: ProjectMetadataStore = {
       projectList: [],
       activeSiteId: null,
       activeThemeId: null,
@@ -231,10 +307,36 @@ async function loadProjectMetadata() {
 
     transaction.oncomplete = () => resolve(result)
     transaction.onerror = event => {
-      console.error("[Worker] Error loading metadata:", event.target.error)
+      console.error(
+        "[Worker] Error loading metadata:",
+        (event.target as IDBTransaction).error
+      )
       reject("Error loading metadata")
     }
   })
+}
+
+interface SaveStatePayload {
+  site_id?: string
+  theme_id?: string
+  active_project_type?: ProjectType
+}
+
+interface LoadStatePayload {
+  siteId?: string
+  themeId?: string
+}
+
+interface SaveStateResult {
+  success: boolean
+  error?: string
+}
+
+interface LoadStateResult {
+  success: boolean
+  siteId?: string
+  themeId?: string
+  error?: string
 }
 
 /**
@@ -242,7 +344,9 @@ async function loadProjectMetadata() {
  * @param {object} payload - The payload containing the project ID and type
  * @returns {Promise<object>} - A promise that resolves to the result of the save operation
  */
-async function handleSaveState(payload) {
+async function handleSaveState(
+  payload?: SaveStatePayload
+): Promise<SaveStateResult> {
   try {
     const { site_id, theme_id, active_project_type } = payload || {}
 
@@ -250,18 +354,22 @@ async function handleSaveState(payload) {
       `[Worker] Saving state with siteId: ${site_id}, themeId: ${theme_id}, activeProjectType: ${active_project_type}`
     )
 
+    if (!store) {
+      throw new Error("WASM store not initialized")
+    }
+
     // Export projects using WASM
     // Convert the exported data to a format suitable for storage
-    const siteExport = actor.process_message(
+    const siteExport = await store.process_message(
       JSON.stringify({ ExportProject: { project_type: "site" } })
     )
 
-    const themeExport = actor.process_message(
+    const themeExport = await store.process_message(
       JSON.stringify({ ExportProject: { project_type: "theme" } })
     )
 
-    console.log("siteExport", siteExport)
-    console.log("themeExport", themeExport)
+    // console.log("[Worker] siteExport", siteExport)
+    // console.log("[Worker] themeExport", themeExport)
 
     // Parse the responses
     const siteResponse = JSON.parse(siteExport)
@@ -279,23 +387,28 @@ async function handleSaveState(payload) {
     const themeBinary = themeResponse.Success
     // Create metadata
     const now = Date.now()
-    const siteMetadata = {
-      id: site_id,
+    const siteMetadata: ProjectMetadata = {
+      id: site_id || "",
       type: "site",
       createdAt: now,
       updatedAt: now,
     }
 
-    const themeMetadata = {
-      id: theme_id,
+    const themeMetadata: ProjectMetadata = {
+      id: theme_id || "",
       type: "theme",
       createdAt: now,
       updatedAt: now,
     }
 
     // Save to IndexedDB
-    await saveProjectToIDB(site_id, siteBinary, siteMetadata)
-    await saveProjectToIDB(theme_id, themeBinary, themeMetadata)
+    if (site_id) {
+      await saveProjectToIDB(site_id, siteBinary, siteMetadata)
+    }
+
+    if (theme_id) {
+      await saveProjectToIDB(theme_id, themeBinary, themeMetadata)
+    }
 
     // Update project list in metadata store
     const allProjectIds = await getAllProjectIds()
@@ -311,7 +424,10 @@ async function handleSaveState(payload) {
     return { success: true }
   } catch (error) {
     console.error("[Worker] Error saving state:", error)
-    return { success: false, error: error.message }
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    }
   }
 }
 
@@ -320,7 +436,9 @@ async function handleSaveState(payload) {
  * @param {object} payload - The payload containing the project ID and type
  * @returns {Promise<object>} - A promise that resolves to the result of the load operation
  */
-async function handleLoadState(payload) {
+async function handleLoadState(
+  payload?: LoadStatePayload
+): Promise<LoadStateResult> {
   try {
     console.log("[Worker] Loading state", payload)
 
@@ -330,8 +448,8 @@ async function handleLoadState(payload) {
     // If no specific IDs provided, load from metadata
     if (!siteId || !themeId) {
       const storedIds = await loadProjectMetadata()
-      siteId = siteId || storedIds.activeSiteId
-      themeId = themeId || storedIds.activeThemeId
+      siteId = siteId || storedIds.activeSiteId || undefined
+      themeId = themeId || storedIds.activeThemeId || undefined
 
       console.log("[Worker] Loaded IDs from metadata:", storedIds)
     }
@@ -345,6 +463,10 @@ async function handleLoadState(payload) {
       return { success: false, error: "No projects to load" }
     }
 
+    if (!store) {
+      throw new Error("WASM store not initialized")
+    }
+
     // Load projects from IndexedDB
     const siteProject = siteId ? await loadProjectFromIDB(siteId) : null
     const themeProject = themeId ? await loadProjectFromIDB(themeId) : null
@@ -355,7 +477,7 @@ async function handleLoadState(payload) {
 
     // Import projects using WASM
     if (siteProject) {
-      const response = actor.process_message(
+      const response = await store.process_message(
         JSON.stringify({
           ImportProject: {
             data: Array.from(new Uint8Array(siteProject.binary)), // Ensure binary data is Uint8Array and convert to array
@@ -373,7 +495,7 @@ async function handleLoadState(payload) {
     }
 
     if (themeProject) {
-      const response = actor.process_message(
+      const response = await store.process_message(
         JSON.stringify({
           ImportProject: {
             data: Array.from(new Uint8Array(themeProject.binary)), // Ensure binary data is Uint8Array and convert to array
@@ -392,59 +514,217 @@ async function handleLoadState(payload) {
 
     // Update active project IDs in metadata store
     const allProjectIds = await getAllProjectIds()
-    await saveUIState(allProjectIds, siteProject?.id, themeProject?.id, "site")
+    await saveUIState(
+      allProjectIds,
+      siteProject?.metadata.id,
+      themeProject?.metadata.id,
+      "site"
+    )
 
     // Notify the main thread about successful load
     self.postMessage({
       type: "state_loaded",
-      siteId: siteProject?.id,
-      themeId: themeProject?.id,
+      siteId: siteProject?.metadata.id,
+      themeId: themeProject?.metadata.id,
     })
 
     return {
       success: true,
-      siteId: siteProject?.id,
-      themeId: themeProject?.id,
+      siteId: siteProject?.metadata.id,
+      themeId: themeProject?.metadata.id,
     }
   } catch (error) {
     console.error("[Worker] Error loading state:", error)
-    return { success: false, error: error.message }
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    }
   }
+}
+
+interface WorkerMessage {
+  id: number
+  action: string
+  payload: Message | any
 }
 
 /**
  * Handle messages from the main thread
- * @param {object} event - The event object containing the message data
+ * @param {MessageEvent<WorkerMessage>} event - The event object containing the message data
  */
-self.onmessage = async function (event) {
+self.onmessage = async function (event: MessageEvent<WorkerMessage>) {
   const { id, action, payload } = event.data
-  console.log(`[Worker] Received message - ID: ${id}, Action: ${action}`)
+  console.log(`[Worker] Received hello message - ID: ${id}, Action: ${action}`)
 
   try {
     // Make sure WASM is initialized
     console.log("[Worker] Ensuring WASM is initialized...")
     await initWasm()
 
-    let response
+    let response: any
 
     // Process the message based on the action type
     if (action === "process_message") {
       console.log("[Worker] Processing message with payload:", payload)
 
+      // Check if this is a document-related message
+      if (payload && "InitializeDocument" in payload) {
+        console.log("[Worker] Handling InitializeDocument message")
+        const { document_id, schema } = payload.InitializeDocument
+
+        if (!store) {
+          throw new Error("[Worker] WASM store not initialized")
+        }
+
+        // Pass the initialization to the WASM store
+        const messageJson = JSON.stringify({
+          InitializeDocument: {
+            document_id: document_id,
+            schema: schema,
+          },
+        })
+
+        console.log(
+          "[Worker] Sending InitializeDocument to Store:",
+          messageJson
+        )
+
+        // Check if WASM store is properly initialized
+        if (typeof store.process_message !== "function") {
+          console.error(
+            "[Worker] Store not properly initialized, process_message is not a function"
+          )
+          throw new Error("WASM Store not properly initialized")
+        }
+
+        const responseJson = await store.process_message(messageJson)
+        console.log(
+          "[Worker] Store response for InitializeDocument:",
+          responseJson
+        )
+
+        response = JSON.parse(responseJson)
+
+        // If WASM store returns an error, fall back to temporary implementation
+        if (response.Error) {
+          throw new Error("[Worker] WASM store returned error")
+        }
+
+        // If successful, store a reference to the document ID
+        if (response && response.Success) {
+          // We could track active documents here if needed
+          console.log(
+            "[Worker] Document initialized successfully:",
+            document_id
+          )
+        }
+      } else if (payload && "GetDocument" in payload) {
+        console.log("[Worker] Handling GetDocument message")
+        const { document_id } = payload.GetDocument
+
+        if (!store) {
+          throw new Error("[Worker] WASM store not initialized")
+        }
+
+        // Try using the WASM store
+        // try {
+        const messageJson = JSON.stringify({
+          GetDocument: {
+            document_id: document_id,
+          },
+        })
+
+        console.log("[Worker] Sending GetDocument to Store:", messageJson)
+
+        const responseJson = await store.process_message(messageJson)
+        console.log("[Worker] Store response for GetDocument:", responseJson)
+
+        response = JSON.parse(responseJson)
+
+        // If WASM store returns an error, fall back to temporary implementation
+        if (response.Error) {
+          throw new Error("[Worker] WASM store returned error")
+        }
+      } else if (payload && "GetFile" in payload) {
+        console.log("[Worker] Handling GetFile message", payload)
+        const { file_id, project_type, collection_name } = payload.GetFile
+        console.log(
+          "[Worker] Getting file",
+          file_id,
+          project_type,
+          collection_name
+        )
+
+        if (!store) {
+          throw new Error("WASM store not initialized")
+        }
+
+        // Pass the get document request to the WASM store
+        try {
+          const messageJson = JSON.stringify({
+            GetFile: {
+              file_id: file_id,
+              project_type: project_type,
+              collection_name: collection_name,
+            },
+          })
+
+          console.log("[Worker] Sending GetFile to Store:", messageJson)
+          const responseJson = await store.process_message(messageJson)
+          console.log("[Worker] Store response for GetFile:", responseJson)
+
+          response = JSON.parse(responseJson)
+        } catch (err: any) {
+          console.error("[Worker] Error in GetFile:", err)
+          throw new Error(`Error getting file: ${err.message || err}`)
+        }
+      } else if (payload && "ApplySteps" in payload) {
+        console.log("[Worker] Handling ApplySteps message")
+        const { document_id, steps, client_id, version } = payload.ApplySteps
+
+        if (!store) {
+          throw new Error("[Worker] WASM store not initialized")
+        }
+
+        // Try using the WASM store
+        const messageJson = JSON.stringify({
+          ApplySteps: {
+            document_id,
+            steps,
+            client_id,
+            version,
+          },
+        })
+
+        console.log("[Worker] Sending ApplySteps to Store:", messageJson)
+        const responseJson = await store.process_message(messageJson)
+        console.log("[Worker] Store response for ApplySteps:", responseJson)
+
+        response = JSON.parse(responseJson)
+
+        // If WASM store returns an error, fall back to temporary implementation
+        if (response.Error) {
+          throw new Error("[Worker] WASM store returned error")
+        }
+      }
       // Check if this is a save/load state message that we handle directly
-      if (payload && "SaveState" in payload) {
+      else if (payload && "SaveState" in payload) {
         console.log("[Worker] Handling SaveState message")
         response = await handleSaveState(payload.SaveState)
       } else if (payload && "LoadState" in payload) {
         console.log("[Worker] Handling LoadState message")
         response = await handleLoadState(payload.LoadState)
       } else {
-        // The payload should be a serialized message for the Actor
+        if (!store) {
+          throw new Error("WASM store not initialized")
+        }
+        // The payload should be a serialized message for the Store
         const messageJson = JSON.stringify(payload)
-        console.log("[Worker] Sending to Actor:", messageJson)
-        const responseJson = actor.process_message(messageJson)
+        console.log("[Worker] Sending to Store:", messageJson)
+        const responseJson = await store.process_message(messageJson)
+        console.log("[Worker] Received JSON response from Store:", responseJson)
         response = JSON.parse(responseJson)
-        console.log("[Worker] Received response from Actor:", response)
+        console.log("[Worker] Received response from Store:", response)
       }
     } else {
       // Unknown action
@@ -480,7 +760,7 @@ self.onmessage = async function (event) {
     self.postMessage({
       id,
       success: false,
-      error: error.message || "Unknown error in worker",
+      error: error instanceof Error ? error.message : "Unknown error in worker",
     })
   }
 }

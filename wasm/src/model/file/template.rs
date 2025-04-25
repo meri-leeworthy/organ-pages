@@ -1,7 +1,19 @@
 use crate::model::file::{Chainable, File, FileBuilder, FileStore, HasContent};
-use loro::{LoroDoc, LoroError, LoroMap};
+use loro::LoroMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use wasm_bindgen::prelude::wasm_bindgen;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str); // log to JS console
+}
+
+// Helper macro for logging
+macro_rules! console_log {
+    ($($t:tt)*) => (log(&format!("[Template (WASM)] {}", format!($($t)*))))
+}
 
 /// Template LoroDoc contains:
 /// - meta
@@ -21,9 +33,12 @@ impl File for Template {
         FileBuilder::new("template")
     }
 
-    fn init(&mut self, meta: Option<&LoroMap>) -> Result<(), String> {
-        self.set_type("template")?;
-        self.initialize_plaintext_document()?;
+    async fn init(&mut self, meta: Option<&LoroMap>) -> Result<(), String> {
+        self.set_type("template").await?;
+        match self.initialize_plaintext_document() {
+            Ok(_) => (),
+            Err(e) => console_log!("Plaintext document was not initialized: {}", e),
+        }
 
         let id = self
             .load_string_field_with_meta(meta, "id")
@@ -35,19 +50,20 @@ impl File for Template {
             .get_i64_field_with_meta(meta, "version")
             .unwrap_or_default();
 
-        self.set_id(&id)?;
-        self.set_name(&name)?;
-        self.set_version(version)?;
+        self.set_id(&id).await?;
+        self.set_name(&name).await?;
+        self.set_version(version).await?;
         Ok(())
     }
 
-    fn build_from(builder: FileBuilder<Self>) -> Result<Self, String> {
+    async fn build_from(builder: FileBuilder<Self>) -> Result<Self, String> {
         // Ensure we have a store
         let store = builder.store.ok_or("No file store provided")?;
 
         let mut template = Template { store };
         template
             .init(None)
+            .await
             .map_err(|e| format!("Failed to initialize template: {}", e))?;
         Ok(template)
     }
@@ -102,14 +118,17 @@ impl PartialEq for Template {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use loro::LoroValue;
+    use loro::{LoroDoc, LoroValue};
     use wasm_bindgen_test::*;
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     #[wasm_bindgen_test]
-    fn test_template_builder() {
+    async fn test_template_builder() {
         let template = Template::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .build()
+            .await
             .expect("Failed to build template");
 
         assert_eq!(template.version().unwrap(), 0);
@@ -117,9 +136,12 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_template_content() {
+    async fn test_template_content() {
         let mut template = Template::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .build()
+            .await
             .expect("Failed to build template");
 
         // Test inserting and getting content
@@ -138,10 +160,14 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_template_init() {
+    async fn test_template_init() {
         let mut template = Template::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_id("test-id".to_string())
+            .expect("Failed to set id")
             .build()
+            .await
             .expect("Failed to build template");
 
         // Create a meta map with test data
@@ -151,6 +177,7 @@ mod tests {
 
         template
             .init(Some(&meta))
+            .await
             .expect("Failed to initialize template");
 
         assert_eq!(template.name().unwrap(), "test-name");
@@ -158,20 +185,32 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_template_equality() {
+    async fn test_template_equality() {
         let template1 = Template::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_id("test-id".to_string())
+            .expect("Failed to set id")
             .build()
+            .await
             .expect("Failed to build template");
 
         let template2 = Template::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_id("test-id".to_string())
+            .expect("Failed to set id")
             .build()
+            .await
             .expect("Failed to build template");
 
         let template3 = Template::builder()
+            .with_doc(LoroDoc::new())
+            .expect("Failed to set doc")
             .with_id("different-id".to_string())
+            .expect("Failed to set id")
             .build()
+            .await
             .expect("Failed to build template");
 
         // Templates are equal if they have the same id, regardless of other fields

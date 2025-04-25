@@ -33,6 +33,7 @@ class WasmClient {
 
   /**
    * Initialize the worker and wait for it to be ready
+   * //TODO: maybe this should also initialise the IDB store?
    * @returns Promise that resolves when the worker is ready
    */
   public async init(): Promise<void> {
@@ -45,17 +46,21 @@ class WasmClient {
 
     // Create a new worker
     if (typeof window !== "undefined") {
-      this.worker = new Worker(new URL("./worker.ts", import.meta.url), {
-        type: "module",
-      })
-
-      // Set up message handler
-      this.worker.onmessage = this.handleWorkerMessage.bind(this)
+      // Use the worker from the public directory with .js extension
+      this.worker = new Worker(
+        new URL("/wasm-worker/worker.js", window.location.origin),
+        {
+          type: "module",
+        }
+      )
 
       // Handle errors
       this.worker.onerror = (error: ErrorEvent) => {
         console.error("Worker error:", error)
       }
+
+      // Set up message handler
+      this.worker.onmessage = this.handleWorkerMessage.bind(this)
     }
 
     return this.readyPromise
@@ -271,7 +276,9 @@ class WasmClient {
    * @returns Promise that resolves when initialization is complete
    */
   public async initDefault(): Promise<Response<void>> {
-    return this.sendMessage<void>({ InitDefault: null })
+    const result = await this.sendMessage<void>({ InitDefault: null })
+    console.log("initDefault result:", result)
+    return result
   }
 
   /**
@@ -499,16 +506,10 @@ class WasmClient {
    * @param themeId The ID of the active theme project
    * @returns Promise that resolves when the state is saved
    */
-  public async saveState(
-    siteId?: string,
-    themeId?: string,
-    activeProjectType?: ProjectType
-  ): Promise<Response<void>> {
+  public async saveState(projectType?: ProjectType): Promise<Response<void>> {
     return this.sendMessage<void>({
       SaveState: {
-        site_id: siteId ? siteId : undefined,
-        theme_id: themeId ? themeId : undefined,
-        active_project_type: activeProjectType ? activeProjectType : undefined,
+        project_type: projectType ? projectType : undefined,
       },
     })
   }

@@ -11,8 +11,6 @@ use loro::{Container, ExportMode, LoroDoc, LoroError, LoroMap, LoroValue, ValueO
 use uuid::Uuid;
 use wasm_bindgen::prelude::*;
 
-use super::FileBuilder;
-
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
@@ -67,7 +65,10 @@ pub struct Project {
 }
 
 impl Project {
-    pub fn new(project_type: ProjectType, theme_id: Option<String>) -> Result<Project, String> {
+    pub async fn new(
+        project_type: ProjectType,
+        theme_id: Option<String>,
+    ) -> Result<Project, String> {
         let id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp_millis() as f64;
         let doc = LoroDoc::new();
@@ -76,7 +77,7 @@ impl Project {
         doc.get_map("collections");
 
         // Initialize metadata map
-        let meta_map = doc.get_map("meta");
+        let meta_map = doc.get_map(crate::META_KEY);
         meta_map
             .insert("id", id.clone())
             .map_err(|e| format!("Failed to set project ID: {}", e))?;
@@ -95,6 +96,7 @@ impl Project {
                 if let Some(theme_id) = theme_id {
                     project
                         .init_default_site(&theme_id)
+                        .await
                         .map_err(|e| format!("Failed to initialize site: {}", e))?;
                 } else {
                     return Err("Theme ID is required for site creation".to_string());
@@ -103,6 +105,7 @@ impl Project {
             ProjectType::Theme => {
                 project
                     .init_default_theme()
+                    .await
                     .map_err(|e| format!("Failed to initialize theme: {}", e))?;
             }
         }
@@ -151,8 +154,8 @@ impl Project {
     }
 
     // Helper method to initialize a default theme
-    fn init_default_theme(&mut self) -> Result<(), String> {
-        let meta = self.doc.get_map("meta");
+    async fn init_default_theme(&mut self) -> Result<(), String> {
+        let meta = self.meta();
         meta.insert("name", "New Theme".to_string())
             .map_err(|e| format!("Failed to set theme name: {}", e))?;
 
@@ -205,16 +208,18 @@ impl Project {
         self.add_collection::<Asset>("asset", asset_model)?;
 
         // Create default template
-        let template_builder: FileBuilder<Template> = self.create_file("index", "template")?;
+        let template_builder: crate::FileBuilder<Template> =
+            self.create_file("index", "template", crate::FileStore::Full(LoroDoc::new()))?;
 
-        let template: Template = self.attach_file(template_builder)?;
+        let template: Template = self.attach_file(template_builder).await?;
         template
             .insert_content(TEMPLATE_CONTENT, 0)
             .map_err(|e| format!("Failed to set template content: {}", e))?;
 
         // Create default style
-        let style_builder: FileBuilder<Text> = self.create_file("style", "text")?;
-        let style: Text = self.attach_file(style_builder)?;
+        let style_builder: crate::FileBuilder<Text> =
+            self.create_file("style", "text", crate::FileStore::Full(LoroDoc::new()))?;
+        let style: Text = self.attach_file(style_builder).await?;
         style
             .insert_content(DEFAULT_STYLE, 0)
             .map_err(|e| format!("Failed to set style content: {}", e))?;
@@ -225,12 +230,12 @@ impl Project {
     }
 
     // Helper method to initialize a default site
-    fn init_default_site(&mut self, theme_id: &str) -> Result<(), String> {
-        let meta = self.doc.get_map("meta");
+    async fn init_default_site(&mut self, theme_id: &str) -> Result<(), String> {
+        let meta = self.meta();
         meta.insert("name", "New Site".to_string())
-            .map_err(|e| format!("Failed to set site name: {}", e))?;
+            .map_err(|e| format!("(init_default_site) Failed to set site name: {}", e))?;
         meta.insert("themeId", theme_id.to_string())
-            .map_err(|e| format!("Failed to set theme ID: {}", e))?;
+            .map_err(|e| format!("(init_default_site) Failed to set theme ID: {}", e))?;
 
         // Add page collection
         let mut page_model = Model::new();
@@ -260,7 +265,10 @@ impl Project {
                 },
             );
 
-        console_log!("Adding Page collection {:?}", page_model);
+        console_log!(
+            "(init_default_site) Adding Page collection {:?}",
+            page_model
+        );
         self.add_collection::<Page>("page", page_model)?;
 
         // Add post collection
@@ -283,7 +291,10 @@ impl Project {
                 },
             );
 
-        console_log!("Adding Post collection {:?}", post_model);
+        console_log!(
+            "(init_default_site) Adding Post collection {:?}",
+            post_model
+        );
         self.add_collection::<Post>("post", post_model)?;
 
         // Add asset collection
@@ -296,7 +307,10 @@ impl Project {
                 required: true,
             },
         );
-        console_log!("Adding Asset collection {:?}", asset_model);
+        console_log!(
+            "(init_default_site) Adding Asset collection {:?}",
+            asset_model
+        );
         self.add_collection::<Asset>("asset", asset_model)?;
 
         let pm_schema = ProseMirrorSchema {
@@ -305,15 +319,17 @@ impl Project {
             top_node: "doc".to_string(),
         };
         // Create default page
-        let main_builder: FileBuilder<Page> = match self.create_file("main", "page") {
-            Ok(builder) => builder.with_pm_schema(pm_schema)?,
-            Err(e) => return Err(e),
-        };
+        let main_builder: crate::FileBuilder<Page> =
+            match self.create_file("main", "page", crate::FileStore::Full(LoroDoc::new())) {
+                Ok(builder) => builder.with_pm_schema(pm_schema)?,
+                Err(e) => return Err(e),
+            };
 
-        let main: Page = self.attach_file(main_builder)?;
+        let main: Page = self.attach_file(main_builder).await?;
         main.set_title("Hello World Title!")
-            .map_err(|e| format!("Failed to set page title: {}", e))?;
-        console_log!("Added Page {:?}", main);
+            .await
+            .map_err(|e| format!("(init_default_site) Failed to set page title: {}", e))?;
+        console_log!("(init_default_site) Added Page {:?}", main);
 
         let pm_schema = ProseMirrorSchema {
             marks: HashMap::new(),
@@ -321,15 +337,17 @@ impl Project {
             top_node: "doc".to_string(),
         };
         // Create default post
-        let post_builder: FileBuilder<Post> = match self.create_file("test_post", "post") {
-            Ok(builder) => builder.with_pm_schema(pm_schema)?,
-            Err(e) => return Err(e),
-        };
+        let post_builder: crate::FileBuilder<Post> =
+            match self.create_file("test_post", "post", crate::FileStore::Full(LoroDoc::new())) {
+                Ok(builder) => builder.with_pm_schema(pm_schema)?,
+                Err(e) => return Err(e),
+            };
 
-        let post: Post = self.attach_file(post_builder)?;
+        let post: Post = self.attach_file(post_builder).await?;
         post.set_title("Hello World Title!")
-            .map_err(|e| format!("Failed to set post title: {}", e))?;
-        console_log!("Added Post {:?}", post);
+            .await
+            .map_err(|e| format!("(init_default_site) Failed to set post title: {}", e))?;
+        console_log!("(init_default_site) Added Post {:?}", post);
 
         self.updated = chrono::Utc::now().timestamp_millis() as f64;
 
@@ -340,15 +358,19 @@ impl Project {
         self.id.clone()
     }
 
+    pub fn meta(&self) -> LoroMap {
+        self.doc.get_map(crate::META_KEY)
+    }
+
     pub fn name(&self) -> Result<String, String> {
-        match self.doc.get_map("meta").get("name") {
+        match self.meta().get("name") {
             Some(ValueOrContainer::Value(LoroValue::String(name))) => Ok(name.clone().to_string()),
             _ => Err("Name not found".to_string()),
         }
     }
 
     pub fn set_name(&mut self, name: &str) -> Result<(), LoroError> {
-        let meta = self.doc.get_map("meta");
+        let meta = self.meta();
         meta.insert("name", name.to_string())?;
         self.updated = chrono::Utc::now().timestamp_millis() as f64;
         self.doc.commit();
@@ -356,7 +378,7 @@ impl Project {
     }
 
     pub fn theme_id(&self) -> Option<String> {
-        let meta = self.doc.get_map("meta");
+        let meta = self.meta();
         match meta.get("themeId") {
             Some(ValueOrContainer::Value(LoroValue::String(theme_id))) => {
                 Some(theme_id.clone().to_string())
@@ -366,7 +388,7 @@ impl Project {
     }
 
     pub fn set_theme_id(&mut self, theme_id: &str) -> Result<(), LoroError> {
-        let meta = self.doc.get_map("meta");
+        let meta = self.meta();
         meta.insert("themeId", theme_id.to_string())?;
         self.updated = chrono::Utc::now().timestamp_millis() as f64;
         self.doc.commit();
@@ -455,21 +477,23 @@ impl Project {
         &mut self,
         name: &str,
         collection_type: &str,
-    ) -> Result<FileBuilder<TFile>, String> {
+        store: crate::FileStore,
+    ) -> Result<crate::FileBuilder<TFile>, String> {
         // Get the collection
         let collection = self.get_collection::<TFile>(collection_type)?;
         // Create a file in the collection
-        collection.create_file(name, collection_type)
+        collection.create_file(name, collection_type, store)
     }
 
     /// Returns a file that is attached to the collection
-    pub fn attach_file<TFile: File + Default>(
+    pub async fn attach_file<TFile: File + Default>(
         &mut self,
-        file_builder: FileBuilder<TFile>,
+        file_builder: crate::FileBuilder<TFile>,
     ) -> Result<TFile, String> {
         let collection = self.get_collection::<TFile>(&file_builder.collection_type())?;
         let file = collection
             .attach_file(file_builder)
+            .await
             .expect("Failed to attach file");
 
         self.doc.commit();
@@ -497,10 +521,11 @@ impl Project {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[test]
-    fn test_new_theme_project() {
-        let project = Project::new(ProjectType::Theme, None).unwrap();
+    #[wasm_bindgen_test]
+    async fn test_new_theme_project() {
+        let project = Project::new(ProjectType::Theme, None).await.unwrap();
 
         // Check basic properties
         assert!(matches!(project.project_type(), ProjectType::Theme));
@@ -518,19 +543,21 @@ mod tests {
 
         // Check default template was created
         let template_collection = project.get_collection::<Template>("template").unwrap();
-        let templates = template_collection.get_files("template").unwrap();
+        let templates = template_collection.get_files("template").await.unwrap();
         assert_eq!(templates.len(), 1);
 
         // Check default style was created
         let text_collection = project.get_collection::<Text>("text").unwrap();
-        let texts = text_collection.get_files("text").unwrap();
+        let texts = text_collection.get_files("text").await.unwrap();
         assert_eq!(texts.len(), 1);
     }
 
-    #[test]
-    fn test_new_site_project() {
+    #[wasm_bindgen_test]
+    async fn test_new_site_project() {
         let theme_id = "test-theme-id";
-        let project = Project::new(ProjectType::Site, Some(theme_id.to_string())).unwrap();
+        let project = Project::new(ProjectType::Site, Some(theme_id.to_string()))
+            .await
+            .unwrap();
 
         // Check basic properties
         assert!(matches!(project.project_type(), ProjectType::Site));
@@ -548,18 +575,18 @@ mod tests {
 
         // Check default page was created
         let page_collection = project.get_collection::<Page>("page").unwrap();
-        let pages = page_collection.get_files("page").unwrap();
+        let pages = page_collection.get_files("page").await.unwrap();
         assert_eq!(pages.len(), 1);
 
         // Check default post was created
         let post_collection = project.get_collection::<Post>("post").unwrap();
-        let posts = post_collection.get_files("post").unwrap();
+        let posts = post_collection.get_files("post").await.unwrap();
         assert_eq!(posts.len(), 1);
     }
 
-    #[test]
-    fn test_project_metadata() {
-        let mut project = Project::new(ProjectType::Theme, None).unwrap();
+    #[wasm_bindgen_test]
+    async fn test_project_metadata() {
+        let mut project = Project::new(ProjectType::Theme, None).await.unwrap();
 
         // Test name update
         let new_name = "Updated Theme";
@@ -578,9 +605,9 @@ mod tests {
         assert!(project.updated() > initial_updated);
     }
 
-    #[test]
-    fn test_collection_operations() {
-        let mut project = Project::new(ProjectType::Theme, None).unwrap();
+    #[wasm_bindgen_test]
+    async fn test_collection_operations() {
+        let mut project = Project::new(ProjectType::Theme, None).await.unwrap();
 
         // Test adding a new collection
         let mut model = Model::new();
@@ -609,23 +636,25 @@ mod tests {
             .any(|(name, _)| name == "test_collection"));
     }
 
-    #[test]
-    fn test_file_operations() {
-        let mut project = Project::new(ProjectType::Theme, None).unwrap();
+    #[wasm_bindgen_test]
+    async fn test_file_operations() {
+        let mut project = Project::new(ProjectType::Theme, None).await.unwrap();
 
         // Create and attach a new text file
-        let file_builder: FileBuilder<Text> = project.create_file("test_text", "text").unwrap();
-        let text_file = project.attach_file(file_builder).unwrap();
+        let file_builder: crate::FileBuilder<Text> = project
+            .create_file("test_text", "text", crate::FileStore::Cache(LoroMap::new()))
+            .unwrap();
+        let text_file = project.attach_file(file_builder).await.unwrap();
 
         // Verify the file exists in the collection
         let text_collection = project.get_collection::<Text>("text").unwrap();
-        let files = text_collection.get_files("text").unwrap();
+        let files = text_collection.get_files("text").await.unwrap();
         assert!(files.iter().any(|f| f.name().unwrap() == "test_text"));
     }
 
-    #[test]
-    fn test_export_import() {
-        let original_project = Project::new(ProjectType::Theme, None).unwrap();
+    #[wasm_bindgen_test]
+    async fn test_export_import() {
+        let original_project = Project::new(ProjectType::Theme, None).await.unwrap();
         let exported_data = original_project.export().unwrap();
 
         // Import the exported data
@@ -652,13 +681,13 @@ mod tests {
         assert_eq!(imported_project.updated(), original_project.updated());
     }
 
-    #[test]
-    fn test_error_cases() {
+    #[wasm_bindgen_test]
+    async fn test_error_cases() {
         // Test creating site without theme ID
-        assert!(Project::new(ProjectType::Site, None).is_err());
+        assert!(Project::new(ProjectType::Site, None).await.is_err());
 
         // Test getting non-existent collection
-        let project = Project::new(ProjectType::Theme, None).unwrap();
+        let project = Project::new(ProjectType::Theme, None).await.unwrap();
         assert!(project.get_collection::<Text>("non_existent").is_err());
     }
 }

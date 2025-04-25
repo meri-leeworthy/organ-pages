@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WASM Worker Integration Tests</title>
+    <style>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 20px;
+        line-height: 1.5;
+      }
+
+      h1 {
+        border-bottom: 2px solid #eee;
+        padding-bottom: 10px;
+      }
+
+      #results {
+        background-color: #f8f9fa;
+        border-radius: 6px;
+        padding: 20px;
+        white-space: pre-wrap;
+        font-family: monospace;
+        max-height: 500px;
+        overflow-y: auto;
+      }
+
+      .success {
+        color: #28a745;
+      }
+
+      .error {
+        color: #dc3545;
+      }
+
+      .info {
+        color: #0366d6;
+      }
+
+      .warning {
+        color: #f0ad4e;
+      }
+
+      .controls {
+        margin: 20px 0;
+      }
+
+      button {
+        background-color: #0366d6;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 4px;
+        font-size: 14px;
+        cursor: pointer;
+        margin-right: 10px;
+      }
+
+      button:hover {
+        background-color: #0353b4;
+      }
+
+      button:disabled {
+        background-color: #ccc;
+        cursor: not-allowed;
+      }
+
+      .test-count {
+        margin-top: 20px;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>WASM Worker Integration Tests</h1>
+
+    <p>
+      This page runs integration tests for the WASM Store Actor and IndexedDB
+      persistence.
+    </p>
+
+    <div class="controls">
+      <button id="run-tests">Run All Tests</button>
+      <button id="clear-results">Clear Results</button>
+      <button id="clear-idb">Clear IndexedDB</button>
+    </div>
+
+    <div id="test-status">Ready to run tests...</div>
+
+    <div id="results"></div>
+
+    <script type="module">
+      // Wait for the page to be fully loaded
+      window.addEventListener("DOMContentLoaded", async () => {
+        try {
+          // DOM elements
+          const resultsDiv = document.getElementById("results")
+          const testStatusElement = document.getElementById("test-status")
+          const runTestsButton = document.getElementById("run-tests")
+          const clearResultsButton = document.getElementById("clear-results")
+          const clearIdbButton = document.getElementById("clear-idb")
+
+          // Check if elements exist before using them
+          if (
+            !resultsDiv ||
+            !testStatusElement ||
+            !runTestsButton ||
+            !clearResultsButton ||
+            !clearIdbButton
+          ) {
+            console.error("Required DOM elements not found")
+            throw new Error("Required DOM elements not found")
+          }
+
+          // Override console.log to capture output
+          const originalConsoleLog = console.log
+          const originalConsoleError = console.error
+
+          console.log = function (...args) {
+            // Call the original console.log
+            originalConsoleLog.apply(console, args)
+
+            // Add to the results div with appropriate styling
+            const message = args
+              .map(arg =>
+                typeof arg === "object"
+                  ? JSON.stringify(arg, null, 2)
+                  : String(arg)
+              )
+              .join(" ")
+
+            let className = "info"
+            if (message.includes("✅")) className = "success"
+            if (message.includes("❌")) className = "error"
+            if (message.includes("🧪")) className = "info"
+            if (message.includes("⚠️")) className = "warning"
+
+            resultsDiv.innerHTML += `<div class="${className}">${message}</div>`
+            resultsDiv.scrollTop = resultsDiv.scrollHeight
+          }
+
+          console.error = function (...args) {
+            // Call the original console.error
+            originalConsoleError.apply(console, args)
+
+            // Add to the results div with error styling
+            const message = args
+              .map(arg =>
+                typeof arg === "object"
+                  ? JSON.stringify(arg, null, 2)
+                  : String(arg)
+              )
+              .join(" ")
+
+            resultsDiv.innerHTML += `<div class="error">${message}</div>`
+            resultsDiv.scrollTop = resultsDiv.scrollHeight
+          }
+
+          // Try to load the integration tests with a more specific error message
+          let integrationTests
+          try {
+            // Import the integration tests
+            // Note that we need to use the full path from the project root
+            integrationTests = await import(
+              "/src/wasm-worker/integration-test.ts"
+            )
+            console.log("Successfully imported integration tests module")
+          } catch (importError) {
+            console.error("Failed to import integration tests:", importError)
+            testStatusElement.textContent =
+              "Failed to load test module. Check console for details."
+            throw importError
+          }
+
+          // Set up button handlers
+          runTestsButton.addEventListener("click", async () => {
+            try {
+              resultsDiv.innerHTML = ""
+              testStatusElement.textContent = "Running tests..."
+              runTestsButton.disabled = true
+
+              console.log(
+                "🔄 Starting integration tests at " +
+                  new Date().toLocaleTimeString()
+              )
+              await integrationTests.runTests()
+
+              testStatusElement.textContent = "Tests completed successfully!"
+            } catch (error) {
+              testStatusElement.textContent =
+                "Tests failed! See console for details."
+              console.error("❌ Test execution error:", error)
+            } finally {
+              runTestsButton.disabled = false
+            }
+          })
+
+          clearResultsButton.addEventListener("click", () => {
+            resultsDiv.innerHTML = ""
+            testStatusElement.textContent =
+              "Results cleared. Ready to run tests..."
+          })
+
+          clearIdbButton.addEventListener("click", async () => {
+            try {
+              await integrationTests.clearIndexedDB()
+              console.log("🧹 IndexedDB cleared successfully")
+            } catch (error) {
+              console.error("❌ Error clearing IndexedDB:", error)
+            }
+          })
+        } catch (error) {
+          console.error("Error initializing test page:", error)
+          const testStatusElement = document.getElementById("test-status")
+          if (testStatusElement) {
+            testStatusElement.textContent =
+              "Error initializing test page. See console for details."
+          }
+        }
+      })
+    </script>
+  </body>
+</html>

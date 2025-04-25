@@ -92,9 +92,7 @@ interface ListFilesMessage {
 // Storage operations
 interface SaveStateMessage {
   SaveState: {
-    site_id: string | undefined
-    theme_id: string | undefined
-    active_project_type: ProjectType | undefined
+    project_type: ProjectType | undefined
   }
 }
 

@@ -32,6 +32,10 @@ extern "C" {
     fn log(s: &str); // log to JS console
 }
 
+macro_rules! console_log {
+    ($($t:tt)*) => (log(&format!("[Lib (WASM)] {}", format!($($t)*))))
+}
+
 // Import the JavaScript functions
 #[wasm_bindgen(module = "/indexeddb.js")]
 extern "C" {
@@ -42,25 +46,22 @@ extern "C" {
 // // Asynchronous function to save data to IndexedDB
 #[wasm_bindgen]
 pub async fn save_data(
-    db_name: String,
-    store_name: String,
-    key: String,
+    store_name: &str,
+    key: &str,
     value: js_sys::Uint8Array,
 ) -> Result<(), JsValue> {
-    let promise = saveToIndexedDB(&db_name, &store_name, &key, &value);
+    let promise = saveToIndexedDB(IDB_DB_NAME, store_name, key, &value);
     JsFuture::from(promise).await?;
+    console_log!("Saved data to IndexedDB: {:?}", value);
     Ok(())
 }
 
 // // Asynchronous function to load data from IndexedDB
 #[wasm_bindgen]
-pub async fn load_data(
-    db_name: String,
-    store_name: String,
-    key: String,
-) -> Result<JsString, JsValue> {
-    let promise = loadFromIndexedDB(&db_name, &store_name, &key);
+pub async fn load_data(store_name: &str, key: &str) -> Result<JsString, JsValue> {
+    let promise = loadFromIndexedDB(IDB_DB_NAME, store_name, key);
     let result = JsFuture::from(promise).await?;
+    console_log!("Loaded data from IndexedDB: {:?}", result);
     Ok(result.into())
 }
 

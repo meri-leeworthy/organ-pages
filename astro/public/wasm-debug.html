@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WASM Debug</title>
+    <style>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      pre {
+        background-color: #f5f5f5;
+        padding: 15px;
+        border-radius: 4px;
+        overflow: auto;
+      }
+      button {
+        padding: 8px 16px;
+        background-color: #4f46e5;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-right: 10px;
+        margin-bottom: 10px;
+      }
+      button:hover {
+        background-color: #4338ca;
+      }
+      .error {
+        color: #dc2626;
+      }
+      .success {
+        color: #059669;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>WASM Debug Tool</h1>
+
+    <div>
+      <button id="test-wasm">Test WASM Loading</button>
+      <button id="test-store">Initialize Store</button>
+      <button id="test-message">Send Test Message</button>
+      <button id="clear-log">Clear Log</button>
+    </div>
+
+    <h2>Log</h2>
+    <pre id="log"></pre>
+
+    <script type="module">
+      const log = document.getElementById("log")
+
+      function addLog(message, isError = false) {
+        const line = document.createElement("div")
+        line.className = isError ? "error" : ""
+        line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`
+        log.appendChild(line)
+        log.scrollTop = log.scrollHeight
+      }
+
+      function addSuccess(message) {
+        const line = document.createElement("div")
+        line.className = "success"
+        line.textContent = `[${new Date().toLocaleTimeString()}] ✓ ${message}`
+        log.appendChild(line)
+        log.scrollTop = log.scrollHeight
+      }
+
+      let wasmModule = null
+      let store = null
+
+      document
+        .getElementById("test-wasm")
+        .addEventListener("click", async () => {
+          try {
+            addLog("Loading WASM module from /wasm/minissg/minissg.js...")
+
+            // Dynamic import
+            wasmModule = await import("/wasm/minissg/minissg.js")
+
+            addSuccess("WASM module loaded successfully!")
+            addLog(`Exported symbols: ${Object.keys(wasmModule).join(", ")}`)
+          } catch (error) {
+            addLog(`Error loading WASM module: ${error.message}`, true)
+            console.error("Error details:", error)
+          }
+        })
+
+      document
+        .getElementById("test-store")
+        .addEventListener("click", async () => {
+          if (!wasmModule) {
+            addLog("Please load the WASM module first", true)
+            return
+          }
+
+          try {
+            addLog("Initializing WASM...")
+            await wasmModule.default()
+
+            addLog("Creating Store instance...")
+            store = new wasmModule.Store()
+
+            addSuccess("Store initialized successfully!")
+          } catch (error) {
+            addLog(`Error initializing Store: ${error.message}`, true)
+            console.error("Error details:", error)
+          }
+        })
+
+      document
+        .getElementById("test-message")
+        .addEventListener("click", async () => {
+          if (!store) {
+            addLog("Please initialize the Store first", true)
+            return
+          }
+
+          try {
+            addLog("Sending InitDefault message to Store...")
+            const message = JSON.stringify({ InitDefault: null })
+
+            const response = store.process_message(message)
+            const parsedResponse = JSON.parse(response)
+
+            addSuccess("Message processed successfully!")
+            addLog(`Response: ${JSON.stringify(parsedResponse, null, 2)}`)
+          } catch (error) {
+            addLog(`Error sending message: ${error.message}`, true)
+            console.error("Error details:", error)
+          }
+        })
+
+      document.getElementById("clear-log").addEventListener("click", () => {
+        log.innerHTML = ""
+      })
+
+      addLog('WASM Debug Tool ready. Click "Test WASM Loading" to begin.')
+    </script>
+  </body>
+</html>
